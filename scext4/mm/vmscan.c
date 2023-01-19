@@ -471,11 +471,10 @@ static int __remove_mapping(struct address_space *mapping, struct page *page,
 
 	if (PageSwapCache(page)) {
 		swp_entry_t swap = { .val = page_private(page) };
+		xa_lock(&mapping->i_pages);
 		mem_cgroup_swapout(page, swap);
-		preempt_disable();
 		__delete_from_swap_cache(page, swap);
-		local_irq_restore(flags);
-		preempt_enable();
+		xa_unlock_irqrestore(&mapping->i_pages, flags);
 		put_swap_page(page, swap);
 	} else {
 		void (*freepage)(struct page *);

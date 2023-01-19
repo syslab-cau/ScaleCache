@@ -246,10 +246,12 @@ void *lf_xas_load(struct xa_state *xas)
 	while (lf_xa_is_node(entry)) {
 		struct xa_node *node = lf_xa_to_node(entry);
 
+		if (__sync_fetch_and_add(&node->del, 0) == 1)	// logically deleted
+			return NULL;
 		if (xas->xa_shift > node->shift)
 			break;
 		entry = lf_xas_descend(xas, node);
-		if (node->shift == 0) //go until you cannot shift anymore?
+		if (node->shift == 0)				// reached leaf node
 			break;
 	}
 	return entry;
@@ -498,34 +500,42 @@ static void lf_xas_shrink(struct xa_state *xas)
 static void lf_xas_delete_node(struct xa_state *xas)
 {
 	struct xa_node *node = xas->xa_node;
+	unsigned char deleted = __sync_fetch_and_add(&node->del, 0);
 
 	for (;;) {
 		struct xa_node *parent;
+		unsigned char node_cnt, parent_cnt;
 
-		LF_XA_NODE_BUG_ON(node, node->count > LF_XA_CHUNK_SIZE);
-		if (node->count)
+		node_cnt = __sync_fetch_and_add(&node->count, 0);
+		LF_XA_NODE_BUG_ON(node, node_cnt > LF_XA_CHUNK_SIZE);
+		if (deleted || node_cnt)
 			break;
 
-		parent = lf_xa_parent_locked(xas->xa, node);
+		if (__sync_bool_compare_and_swap(&node->del, deleted, 
+					!__sync_fetch_and_add(&node->count, 0)))
+			break;
+
+		parent = __sync_fetch_and_add(&node->parent, 0);
 		xas->xa_node = parent;
 		xas->xa_offset = node->offset;
-		xa_node_free(node);
+		//xa_node_free(node);
 
 		if (!parent) {
-			xas->xa->xa_head = NULL;
+			//xas->xa->xa_head = NULL;
 			xas->xa_node = LF_XAS_BOUNDS;
 			return;
 		}
 
-		parent->slots[xas->xa_offset] = NULL;
-		parent->count--;
-		LF_XA_NODE_BUG_ON(parent, parent->count > LF_XA_CHUNK_SIZE);
+		//parent->slots[xas->xa_offset] = NULL;
+		parent_cnt = __sync_sub_and_fetch(&parent->count, 1);
+		LF_XA_NODE_BUG_ON(parent, parent_cnt > LF_XA_CHUNK_SIZE);
 		node = parent;
+		deleted = __sync_fetch_and_add(&node->del, 0);
 		lf_xas_update(xas, node);
 	}
 
-	if (!node->parent)
-		lf_xas_shrink(xas);
+	//if (!node->parent)
+	//	lf_xas_shrink(xas);
 }
 
 /**
@@ -576,16 +586,16 @@ static void lf_xas_free_nodes(struct xa_state *xas, struct xa_node *top)
 static int lf_xas_expand(struct xa_state *xas, void *head)
 {
 	struct xarray *xa = xas->xa;
-	struct xa_node *node = NULL;
-	struct xa_node *temp = NULL;
+	struct xa_node *node = NULL, *tmp_node;
 	unsigned int shift = 0;
 	unsigned long max = lf_xas_max(xas);
+	void *tmp_head;
 
 	if (!head) {
 		if (max == 0)
 			return 0;
 		while ((max >> shift) >= LF_XA_CHUNK_SIZE)
-			shift += LF_XA_CHUNK_SHIFT; //shift 6 each, similar to radix tree !
+			shift += LF_XA_CHUNK_SHIFT;
 		return shift + LF_XA_CHUNK_SHIFT;
 	} else if (lf_xa_is_node(head)) {
 		node = lf_xa_to_node(head);
@@ -597,7 +607,7 @@ static int lf_xas_expand(struct xa_state *xas, void *head)
 		lf_xa_mark_t mark = 0;
 
 		LF_XA_NODE_BUG_ON(node, shift > BITS_PER_LONG);
-		node = lf_xas_alloc(xas, shift); //alloc new node
+		node = lf_xas_alloc(xas, shift); // alloc new node
 		if (!node)
 			return -ENOMEM;
 
@@ -628,26 +638,29 @@ static int lf_xas_expand(struct xa_state *xas, void *head)
 		 */
 		if (lf_xa_is_node(head)) {
 			lf_xa_to_node(head)->offset = 0;
-			rcu_assign_pointer(lf_xa_to_node(head)->parent, node); 
-			//Perform CAS
-			// temp = lf_xa_to_node(head) -> parent;
-			// // //__sync_val_compare_and_swap(&lf_xa_to_node(head)->parent, temp, node);
-			// if (!__sync_bool_compare_and_swap(&lf_xa_to_node(head)->parent, temp, node)){
-			// 	//pr_info("Cannot CAS \n");
-			// 	kmem_cache_free(radix_tree_node_cachep, node);
-			// 	break;
-			// }
+			//rcu_assign_pointer(lf_xa_to_node(head)->parent, node); 
+			// Perform CAS
+			tmp_node = lf_xa_to_node(head)->parent;
+			if (tmp_node != NULL || !__sync_bool_compare_and_swap(
+				    &lf_xa_to_node(head)->parent, tmp_node, node)) {
+				struct xa_node *parent = __sync_fetch_and_add(
+						&lf_xa_to_node(head)->parent, 0);
+				xa_node_free(node);
+				head = lf_xa_mk_node(parent);
+				goto ascend;
+			}
 		}
+		// Perform CAS
+		tmp_head = head;
 		head = lf_xa_mk_node(node);
-		rcu_assign_pointer(xa->xa_head, head);
-		//Perform CAS
-		// temp = xa->xa_head;
-		// if (!__sync_bool_compare_and_swap(&xa->xa_head, temp, node)){
-		// 	kmem_cache_free(radix_tree_node_cachep, node);
-		// 	break;
-		// }
+		//rcu_assign_pointer(xa->xa_head, head);
+		if (!__sync_bool_compare_and_swap(&xa->xa_head, tmp_head, head)) {
+			xa_node_free(node);
+			head = __sync_fetch_and_add(&xa->xa_head, 0);
+			goto ascend;
+		}
 		lf_xas_update(xas, node);
-
+ascend:
 		shift += LF_XA_CHUNK_SHIFT;
 	}
 
@@ -671,14 +684,15 @@ static int lf_xas_expand(struct xa_state *xas, void *head)
 static void *lf_xas_create(struct xa_state *xas, bool allow_root)
 {
 	struct xarray *xa = xas->xa;
-	void *entry;
+	void *entry, *temp;
 	void __rcu **slot;
 	struct xa_node *node = xas->xa_node;
 	int shift;
 	unsigned int order = xas->xa_shift;
 
 	if (lf_xas_top(node)) { 
-		entry = xa_head_locked(xa); 
+		//entry = xa_head_locked(xa); 
+		entry = __sync_fetch_and_add(&xa->xa_head, 0); 
 		xas->xa_node = NULL;
 		if (!entry && lf_xa_zero_busy(xa))
 			entry = LF_XA_ZERO_ENTRY;
@@ -711,12 +725,26 @@ static void *lf_xas_create(struct xa_state *xas, bool allow_root)
 				break;
 			if (lf_xa_track_free(xa))
 				node_mark_all(node, LF_XA_FREE_MARK);
-			rcu_assign_pointer(*slot, lf_xa_mk_node(node));
+			//rcu_assign_pointer(*slot, lf_xa_mk_node(node));
+			temp = entry;
+			if (!__sync_bool_compare_and_swap(
+					    slot, temp, lf_xa_mk_node(node))) {
+				xa_node_free(node);
+				node = lf_xa_to_node(*slot);
+				goto descend;
+			}
 		} else if (lf_xa_is_node(entry)) {
 			node = lf_xa_to_node(entry);
+			if (__sync_fetch_and_add(&node->del, 0) == 1) {
+				struct xa_node *parent = node->parent;
+				if (parent)
+					__sync_fetch_and_add(&parent->count, 1);
+				__sync_lock_test_and_set(&node->del, 0);
+			}
 		} else {
 			break;
 		}
+descend:
 		entry = lf_xas_descend(xas, node);
 		slot = &node->slots[xas->xa_offset];
 	}
@@ -782,7 +810,7 @@ static void update_node(struct xa_state *xas, struct xa_node *node,
 
 	// node->count += count;
 	// node->nr_values += values;
-	__sync_fetch_and_add(&node->count, count); //kiet
+	__sync_fetch_and_add(&node->count, count);
 	__sync_fetch_and_add(&node->nr_values, values);
 	LF_XA_NODE_BUG_ON(node, node->count > LF_XA_CHUNK_SIZE);
 	LF_XA_NODE_BUG_ON(node, node->nr_values > LF_XA_CHUNK_SIZE);
@@ -829,10 +857,11 @@ void *lf_xas_store(struct xa_state *xas, void *entry)
 	void *temp = xas->xa->xa_head;
 
 	if (entry) {
-		bool allow_root = !lf_xa_is_node(entry) && !lf_xa_is_zero(entry); //entry is not node and not error -> then the new node could be root
+		// entry is not node and not error -> then the new node could be root
+		bool allow_root = !lf_xa_is_node(entry) && !lf_xa_is_zero(entry);
 		first = lf_xas_create(xas, allow_root); // create slot to move pointer in
 	} else {
-		first = lf_xas_load(xas); // if entry is NULL -> no store?
+		first = lf_xas_load(xas);		// if entry is NULL -> no store?
 	}
 
 	if (lf_xas_invalid(xas))
@@ -844,10 +873,10 @@ void *lf_xas_store(struct xa_state *xas, void *entry)
 		return first;
 
 	next = first;
-	offset = xas->xa_offset;  //update offset, the slot mask
-	max = xas->xa_offset + xas->xa_sibs; //max number of leaves
+	offset = xas->xa_offset;		// update offset, the slot mask
+	max = xas->xa_offset + xas->xa_sibs;	// max number of leaves
 	if (node) {
-		slot = &node->slots[offset]; //get slot pointer
+		slot = &node->slots[offset];	// get slot pointer
 		if (xas->xa_sibs)
 			lf_xas_squash_marks(xas);
 	}
@@ -865,18 +894,10 @@ void *lf_xas_store(struct xa_state *xas, void *entry)
 		if (node)
 			temp = node->slots[offset];
 			
-		while (!__sync_bool_compare_and_swap(slot, temp, entry)){
+		while (!__sync_bool_compare_and_swap(slot, temp, entry)) {
 			if (node)
 				temp = node->slots[offset];
 		}
-		
-		//while (!__sync_lock_test_and_set(slot, entry)){
-		//	if (node)
-		//		temp = &node->slots[offset];
-		//}
-
-		//*slot = entry;
-	
 
 		if (lf_xa_is_node(next) && (!node || node->shift))
 			lf_xas_free_nodes(xas, lf_xa_to_node(next));
@@ -901,7 +922,7 @@ void *lf_xas_store(struct xa_state *xas, void *entry)
 			first = next;
 		}
 		//slot++;
-		__sync_fetch_and_add(&slot, 1); //kiet
+		__sync_fetch_and_add(&slot, 1);
 	}
 
 	update_node(xas, node, count, values);

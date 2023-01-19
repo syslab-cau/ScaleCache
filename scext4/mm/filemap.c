@@ -146,10 +146,9 @@ static void page_cache_delete(struct address_space *mapping,
 	/* Leave page->index set: truncation lookup relies upon it */
 
 	smp_mb();
+	lf_xas_lock(&xas);
 	if (shadow) {
-		__sync_fetch_and_add(&(mapping->nrexceptional), nr);
-		smp_mb();
-		__sync_fetch_and_sub(&(mapping->nrpages), nr);
+		mapping->nrexceptional += nr;
 		/*
 		 * Make sure the nrexceptional update is committed before
 		 * the nrpages update so that final truncate racing
@@ -158,9 +157,9 @@ static void page_cache_delete(struct address_space *mapping,
 		 */
 		smp_wmb();
 
-	} else {
-		__sync_fetch_and_sub(&(mapping->nrpages), nr);
 	}
+	mapping->nrpages -= nr;
+	lf_xas_unlock(&xas);
 }
 
 static void unaccount_page_cache_page(struct address_space *mapping,
@@ -915,11 +914,11 @@ noinline int __scext4_add_to_page_cache_locked_optimized(struct page *page,
 		if (order > thp_order(page))
 			xas_split_alloc(&xas, xa_load(xas.xa, xas.xa_index),
 					order, gfp_mask);
-		local_irq_disable();
-		preempt_disable();
-		//xas_lock_irq(&xas);
+		//local_irq_disable();
+		//preempt_disable();
+		xas_lock_irq(&xas);
 
-		xas_for_each_conflict(&xas, entry) {
+		lf_xas_for_each_conflict(&xas, entry) {
 			old = entry;
 			if (!xa_is_value(entry)) {
 				xas_set_err(&xas, -EEXIST);
@@ -938,7 +937,7 @@ noinline int __scext4_add_to_page_cache_locked_optimized(struct page *page,
 			}
 		}
 
-		xas_lock(&xas);
+		//xas_lock(&xas);
 		lf_xas_store(&xas, page);
 		smp_mb();
 		if (xas_error(&xas))
@@ -947,9 +946,8 @@ noinline int __scext4_add_to_page_cache_locked_optimized(struct page *page,
 		//smp_mb();
 
 		if (old)
-			__sync_fetch_and_sub(&mapping->nrexceptional, 1);
-		smp_mb();
-		__sync_fetch_and_add(&mapping->nrpages, 1);
+			mapping->nrexceptional--;
+		mapping->nrpages++;
 
 		/* hugetlb pages do not participate in page cache accounting */
 		if (!huge)

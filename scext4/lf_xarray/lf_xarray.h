@@ -500,13 +500,13 @@ static inline bool lf_xa_marked(const struct xarray *xa, lf_xa_mark_t mark)
 	     entry; entry = lf_xa_find_after(xa, &index, ULONG_MAX, filter))
 
 #define lf_xa_trylock(xa)		spin_trylock(&(xa)->xa_lock)
-#define xa_lock(xa)		spin_lock(&(xa)->xa_lock)
+#define lf_xa_lock(xa)			spin_lock(&(xa)->xa_lock)
 #define lf_xa_unlock(xa)		spin_unlock(&(xa)->xa_lock)
-#define xa_lock_bh(xa)		spin_lock_bh(&(xa)->xa_lock)
-#define lf_xa_unlock_bh(xa)	spin_unlock_bh(&(xa)->xa_lock)
-#define xa_lock_irq(xa)		spin_lock_irq(&(xa)->xa_lock)
-#define lf_xa_unlock_irq(xa)	spin_unlock_irq(&(xa)->xa_lock)
-#define xa_lock_irqsave(xa, flags) \
+#define lf_xa_lock_bh(xa)		spin_lock_bh(&(xa)->xa_lock)
+#define lf_xa_unlock_bh(xa)		spin_unlock_bh(&(xa)->xa_lock)
+#define lf_xa_lock_irq(xa)		spin_lock_irq(&(xa)->xa_lock)
+#define lf_xa_unlock_irq(xa)		spin_unlock_irq(&(xa)->xa_lock)
+#define lf_xa_lock_irqsave(xa, flags) \
 				spin_lock_irqsave(&(xa)->xa_lock, flags)
 #define lf_xa_unlock_irqrestore(xa, flags) \
 				spin_unlock_irqrestore(&(xa)->xa_lock, flags)
@@ -1345,17 +1345,17 @@ struct lf_xa_state {
 			(1U << (order % LF_XA_CHUNK_SHIFT)) - 1)
 
 #define lf_xas_marked(xas, mark)	lf_xa_marked((xas)->xa, (mark))
-#define lf_xas_trylock(xas)	lf_xa_trylock((xas)->xa)
-#define lf_xas_lock(xas)		xa_lock((xas)->xa)
+#define lf_xas_trylock(xas)		lf_xa_trylock((xas)->xa)
+#define lf_xas_lock(xas)		lf_xa_lock((xas)->xa)
 #define lf_xas_unlock(xas)		lf_xa_unlock((xas)->xa)
-#define lf_xas_lock_bh(xas)	xa_lock_bh((xas)->xa)
-#define lf_xas_unlock_bh(xas)	lf_xa_unlock_bh((xas)->xa)
-#define lf_xas_lock_irq(xas)	xa_lock_irq((xas)->xa)
-#define lf_xas_unlock_irq(xas)	lf_xa_unlock_irq((xas)->xa)
+#define lf_xas_lock_bh(xas)		lf_xa_lock_bh((xas)->xa)
+#define lf_xas_unlock_bh(xas)		lf_xa_unlock_bh((xas)->xa)
+#define lf_xas_lock_irq(xas)		lf_xa_lock_irq((xas)->xa)
+#define lf_xas_unlock_irq(xas)		lf_xa_unlock_irq((xas)->xa)
 #define lf_xas_lock_irqsave(xas, flags) \
-				xa_lock_irqsave((xas)->xa, flags)
+					lf_xa_lock_irqsave((xas)->xa, flags)
 #define lf_xas_unlock_irqrestore(xas, flags) \
-				lf_xa_unlock_irqrestore((xas)->xa, flags)
+					lf_xa_unlock_irqrestore((xas)->xa, flags)
 
 /**
  * lf_xas_error() - Return an errno stored in the xa_state.
