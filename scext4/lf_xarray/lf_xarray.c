@@ -1497,7 +1497,7 @@ void *lf_xas_find_conflict(struct xa_state *xas)
 
 	if (xas->xa_node->shift > xas->xa_shift)
 		return NULL;
-
+	//printk("AH?\n");
 	for (;;) {
 		if (xas->xa_node->shift == xas->xa_shift) {
 			if ((xas->xa_offset & xas->xa_sibs) == xas->xa_sibs)

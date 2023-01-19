@@ -394,3 +394,80 @@ void workingset_update_node(struct xa_node *node)
 	}
 }
 
+void *lf_xas_store(struct xa_state *xas, void *entry);
+
+static enum lru_status shadow_lru_isolate(struct list_head *item,
+					  struct list_lru_one *lru,
+					  spinlock_t *lru_lock,
+					  void *arg) __must_hold(lru_lock)
+{
+	struct xa_node *node = container_of(item, struct xa_node, private_list);
+	XA_STATE(xas, node->array, 0);
+	struct address_space *mapping;
+	int ret;
+
+	/*
+	 * Page cache insertions and deletions synchroneously maintain
+	 * the shadow node LRU under the i_pages lock and the
+	 * lru_lock.  Because the page cache tree is emptied before
+	 * the inode can be destroyed, holding the lru_lock pins any
+	 * address_space that has nodes on the LRU.
+	 *
+	 * We can then safely transition to the i_pages lock to
+	 * pin only the address_space of the particular node we want
+	 * to reclaim, take the node off-LRU, and drop the lru_lock.
+	 */
+
+	mapping = container_of(node->array, struct address_space, i_pages);
+
+	/* Coming from the list, invert the lock order */
+	if (!xa_trylock(&mapping->i_pages)) {
+		spin_unlock_irq(lru_lock);
+		ret = LRU_RETRY;
+		goto out;
+	}
+
+	list_lru_isolate(lru, item);
+	__dec_lruvec_slab_state(node, WORKINGSET_NODES);
+
+	spin_unlock(lru_lock);
+
+	/*
+	 * The nodes should only contain one or more shadow entries,
+	 * no pages, so we expect to be able to remove them all and
+	 * delete and free the empty node afterwards.
+	 */
+	if (WARN_ON_ONCE(!node->nr_values))
+		goto out_invalid;
+	if (WARN_ON_ONCE(node->count != node->nr_values))
+		goto out_invalid;
+	mapping->nrexceptional -= node->nr_values;
+	xas.xa_node = xa_parent_locked(&mapping->i_pages, node);
+	xas.xa_offset = node->offset;
+	xas.xa_shift = node->shift + XA_CHUNK_SHIFT;
+	xas_set_update(&xas, workingset_update_node);
+	/*
+	 * We could store a shadow entry here which was the minimum of the
+	 * shadow entries we were tracking ...
+	 */
+	lf_xas_store(&xas, NULL);
+	__inc_lruvec_slab_state(node, WORKINGSET_NODERECLAIM);
+
+out_invalid:
+	xa_unlock_irq(&mapping->i_pages);
+	ret = LRU_REMOVED_RETRY;
+out:
+	cond_resched();
+	spin_lock_irq(lru_lock);
+	return ret;
+}
+
+//static unsigned long scan_shadow_nodes(struct shrinker *shrinker,
+unsigned long scan_shadow_nodes(struct shrinker *shrinker,
+				       struct shrink_control *sc)
+{
+	/* list_lru lock nests inside the IRQ-safe i_pages lock */
+	return list_lru_shrink_walk_irq(&shadow_nodes, sc, shadow_lru_isolate,
+					NULL);
+}
+

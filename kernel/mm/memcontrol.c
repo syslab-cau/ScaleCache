@@ -456,6 +456,7 @@ void memcg_set_shrinker_bit(struct mem_cgroup *memcg, int nid, int shrinker_id)
 		rcu_read_unlock();
 	}
 }
+EXPORT_SYMBOL(memcg_set_shrinker_bit);
 
 /**
  * mem_cgroup_css_from_page - css of the memcg associated with a page

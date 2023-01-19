@@ -186,8 +186,12 @@ static void set_task_reclaim_state(struct task_struct *task,
 	task->reclaim_state = rs;
 }
 
-static LIST_HEAD(shrinker_list);
-static DECLARE_RWSEM(shrinker_rwsem);
+//static LIST_HEAD(shrinker_list);
+LIST_HEAD(shrinker_list);
+EXPORT_SYMBOL(shrinker_list);
+//static DECLARE_RWSEM(shrinker_rwsem);
+DECLARE_RWSEM(shrinker_rwsem);
+EXPORT_SYMBOL(shrinker_rwsem);
 
 #ifdef CONFIG_MEMCG
 /*
@@ -203,8 +207,12 @@ static DECLARE_RWSEM(shrinker_rwsem);
  */
 #define SHRINKER_REGISTERING ((struct shrinker *)~0UL)
 
-static DEFINE_IDR(shrinker_idr);
-static int shrinker_nr_max;
+//static DEFINE_IDR(shrinker_idr);
+DEFINE_IDR(shrinker_idr);
+EXPORT_SYMBOL(shrinker_idr);
+//static int shrinker_nr_max;
+int shrinker_nr_max;
+EXPORT_SYMBOL(shrinker_nr_max);
 
 static int prealloc_memcg_shrinker(struct shrinker *shrinker)
 {
@@ -697,8 +705,7 @@ static unsigned long shrink_slab_memcg(gfp_t gfp_mask, int nid,
  *
  * Returns the number of reclaimed slab objects.
  */
-//static unsigned long shrink_slab(gfp_t gfp_mask, int nid,
-unsigned long shrink_slab(gfp_t gfp_mask, int nid,
+static unsigned long shrink_slab(gfp_t gfp_mask, int nid,
 				 struct mem_cgroup *memcg,
 				 int priority)
 {
@@ -745,7 +752,6 @@ out:
 	cond_resched();
 	return freed;
 }
-EXPORT_SYMBOL(shrink_slab);
 
 void drop_slab_node(int nid)
 {
