@@ -6283,7 +6283,7 @@ static int __init scext4_init_fs(void)
 		goto out;
 
  	/* assign wb_workfn */
- 	wb_workfn_in_scext4 = &scext4_wb_workfn;
+ 	//wb_workfn_in_scext4 = &scext4_wb_workfn;
 
 	return 0;
 out:

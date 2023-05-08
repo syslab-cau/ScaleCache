@@ -2066,7 +2066,8 @@ long wb_do_writeback(struct bdi_writeback *wb)
 	struct wb_writeback_work *work;
 	long wrote = 0;
 
-	set_bit(WB_writeback_running, &wb->state);
+	//if (!__sync_fetch_and_add(&wb->nr_threads, 1))
+		set_bit(WB_writeback_running, &wb->state);
 	while ((work = get_next_work_item(wb)) != NULL) {
 		trace_writeback_exec(wb, work);
 		wrote += wb_writeback(wb, work);
@@ -2083,7 +2084,8 @@ long wb_do_writeback(struct bdi_writeback *wb)
 	 */
 	wrote += wb_check_old_data_flush(wb);
 	wrote += wb_check_background_flush(wb);
-	clear_bit(WB_writeback_running, &wb->state);
+	//if (__sync_sub_and_fetch(&wb->nr_threads, 1))
+		clear_bit(WB_writeback_running, &wb->state);
 
 	return wrote;
 }

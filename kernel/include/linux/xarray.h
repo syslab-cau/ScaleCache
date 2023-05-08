@@ -1089,7 +1089,8 @@ struct xa_node {
 	unsigned char	offset;		/* Slot offset in parent */
 	unsigned char	count;		/* Total entry count */
 	unsigned char	nr_values;	/* Value entry count */
-	unsigned char	del;		/* Logically deleted */
+	unsigned char	gc_flag;	/* Under deleting */
+	unsigned short	refcnt;		/* Referencing users */
 	struct xa_node __rcu *parent;	/* NULL at top of tree */
 	struct xarray	*array;		/* The array we belong to */
 	union {
@@ -1276,7 +1277,7 @@ struct xa_state {
 	unsigned char xa_sibs;
 	unsigned char xa_offset;
 	unsigned char xa_pad;		/* Helps gcc generate better code */
-	struct xa_node *xa_node;
+	struct xa_node *xa_node;	/* Private, do not access directly! */
 	struct xa_node *xa_alloc;
 	xa_update_node_t xa_update;
 };

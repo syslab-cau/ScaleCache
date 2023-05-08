@@ -270,6 +270,7 @@ scext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	}
 
 	ret = __scext4_generic_file_write_iter(iocb, from);
+	//ret = __generic_file_write_iter(iocb, from);
 	/*
 	 * Unaligned direct AIO must be the only IO in flight. Otherwise
 	 * overlapping aligned IO after unaligned might result in data
@@ -513,7 +514,7 @@ loff_t scext4_llseek(struct file *file, loff_t offset, int whence)
 	return vfs_setpos(file, offset, maxbytes);
 }
 
-extern void lf_xa_garbage_collector(struct xarray *xa);
+//extern void lf_xa_garbage_collector(struct xarray *xa);
 
 const struct file_operations scext4_file_operations = {
 	.llseek		= scext4_llseek,
@@ -532,7 +533,7 @@ const struct file_operations scext4_file_operations = {
 	.splice_read	= generic_file_splice_read,
 	.splice_write	= iter_file_splice_write,
 	.fallocate	= scext4_fallocate,
-	.page_gc	= lf_xa_garbage_collector,
+	//.page_gc	= lf_xa_garbage_collector,
 };
 
 const struct inode_operations scext4_file_inode_operations = {

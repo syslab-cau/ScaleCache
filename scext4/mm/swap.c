@@ -38,9 +38,10 @@
 
 #include "internal.h"
 
-#define CREATE_TRACE_POINTS
-#include <trace/events/pagemap.h>
+//#define CREATE_TRACE_POINTS
+//#include <trace/events/pagemap.h>
 
+#if 0
 /* How many pages do we try to swap or page in/out together? */
 int page_cluster;
 
@@ -645,7 +646,6 @@ void deactivate_file_page(struct page *page)
 		put_cpu_var(lru_deactivate_file_pvecs);
 	}
 }
-EXPORT_SYMBOL(deactivate_file_page);
 
 /*
  * deactivate_page - deactivate a page
@@ -972,6 +972,12 @@ void __pagevec_lru_add(struct pagevec *pvec)
 }
 EXPORT_SYMBOL(__pagevec_lru_add);
 
+#endif
+
+extern unsigned scext4_find_get_entries(struct address_space *mapping,
+			  pgoff_t start, unsigned int nr_entries,
+			  struct page **entries, pgoff_t *indices);
+
 /**
  * pagevec_lookup_entries - gang pagecache lookup
  * @pvec:	Where the resulting entries are placed
@@ -997,7 +1003,7 @@ unsigned pagevec_lookup_entries(struct pagevec *pvec,
 				pgoff_t start, unsigned nr_entries,
 				pgoff_t *indices)
 {
-	pvec->nr = find_get_entries(mapping, start, nr_entries,
+	pvec->nr = scext4_find_get_entries(mapping, start, nr_entries,
 				    pvec->pages, indices);
 	return pagevec_count(pvec);
 }
@@ -1023,6 +1029,9 @@ void pagevec_remove_exceptionals(struct pagevec *pvec)
 	pvec->nr = j;
 }
 
+extern unsigned scext4_find_get_pages_range(struct address_space *mapping, pgoff_t *start,
+			      pgoff_t end, unsigned int nr_pages,
+			      struct page **pages);
 /**
  * pagevec_lookup_range - gang pagecache lookup
  * @pvec:	Where the resulting pages are placed
@@ -1043,34 +1052,40 @@ void pagevec_remove_exceptionals(struct pagevec *pvec)
  * number is smaller than PAGEVEC_SIZE, the end of specified range has been
  * reached.
  */
-unsigned pagevec_lookup_range(struct pagevec *pvec,
+unsigned scext4_pagevec_lookup_range(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *start, pgoff_t end)
 {
-	pvec->nr = find_get_pages_range(mapping, start, end, PAGEVEC_SIZE,
+	pvec->nr = scext4_find_get_pages_range(mapping, start, end, PAGEVEC_SIZE,
 					pvec->pages);
 	return pagevec_count(pvec);
 }
-EXPORT_SYMBOL(pagevec_lookup_range);
+//EXPORT_SYMBOL(pagevec_lookup_range);
 
-unsigned pagevec_lookup_range_tag(struct pagevec *pvec,
+extern unsigned scext4_find_get_pages_range_tag(struct address_space *mapping, pgoff_t *index,
+			pgoff_t end, xa_mark_t tag, unsigned int nr_pages,
+			struct page **pages);
+
+unsigned scext4_pagevec_lookup_range_tag(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *index, pgoff_t end,
 		xa_mark_t tag)
 {
-	pvec->nr = find_get_pages_range_tag(mapping, index, end, tag,
+	pvec->nr = scext4_find_get_pages_range_tag(mapping, index, end, tag,
 					PAGEVEC_SIZE, pvec->pages);
 	return pagevec_count(pvec);
 }
-EXPORT_SYMBOL(pagevec_lookup_range_tag);
+//EXPORT_SYMBOL(pagevec_lookup_range_tag);
 
-unsigned pagevec_lookup_range_nr_tag(struct pagevec *pvec,
+unsigned scext4_pagevec_lookup_range_nr_tag(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *index, pgoff_t end,
 		xa_mark_t tag, unsigned max_pages)
 {
-	pvec->nr = find_get_pages_range_tag(mapping, index, end, tag,
+	pvec->nr = scext4_find_get_pages_range_tag(mapping, index, end, tag,
 		min_t(unsigned int, max_pages, PAGEVEC_SIZE), pvec->pages);
 	return pagevec_count(pvec);
 }
-EXPORT_SYMBOL(pagevec_lookup_range_nr_tag);
+//EXPORT_SYMBOL(pagevec_lookup_range_nr_tag);
+
+#if 0
 /*
  * Perform any setup for the swap system
  */
@@ -1088,3 +1103,4 @@ void __init swap_setup(void)
 	 * _really_ don't want to cluster much more
 	 */
 }
+#endif

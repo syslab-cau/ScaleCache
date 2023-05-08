@@ -197,6 +197,8 @@ int scext4_truncate_restart_trans(handle_t *handle, struct inode *inode,
 	return ret;
 }
 
+extern void scext4_truncate_inode_pages_final(struct address_space *mapping);
+
 /*
  * Called at the last iput() if i_nlink is zero.
  */
@@ -244,18 +246,21 @@ void scext4_evict_inode(struct inode *inode)
 			jbd3_complete_transaction(journal, commit_tid);
 			filemap_write_and_wait(&inode->i_data);
 		}
-		truncate_inode_pages_final(&inode->i_data);
+		scext4_truncate_inode_pages_final(&inode->i_data);
 
+		printk("Inode has link!! \n");
 		goto no_delete;
 	}
 
-	if (is_bad_inode(inode))
+	if (is_bad_inode(inode)) {
+		printk("BAD Inode!! \n");
 		goto no_delete;
+	}
 	dquot_initialize(inode);
 
 	if (scext4_should_order_data(inode))
 		scext4_begin_ordered_truncate(inode, 0);
-	truncate_inode_pages_final(&inode->i_data);
+	scext4_truncate_inode_pages_final(&inode->i_data);
 
 	/*
 	 * Protect us against freezing - iput() caller didn't have to have any
@@ -287,6 +292,7 @@ void scext4_evict_inode(struct inode *inode)
 		scext4_orphan_del(NULL, inode);
 		if (freeze_protected)
 			sb_end_intwrite(inode->i_sb);
+		printk("journal start has error !! \n");
 		goto no_delete;
 	}
 
@@ -307,6 +313,7 @@ void scext4_evict_inode(struct inode *inode)
 	if (err) {
 		scext4_warning(inode->i_sb,
 			     "couldn't mark inode dirty (err %d)", err);
+		printk("couldn't mark inode dirty (err %d)", err);
 		goto stop_handle;
 	}
 	if (inode->i_blocks) {
@@ -314,6 +321,8 @@ void scext4_evict_inode(struct inode *inode)
 		if (err) {
 			scext4_error(inode->i_sb,
 				   "couldn't truncate inode %lu (err %d)",
+				   inode->i_ino, err);
+			printk("couldn't truncate inode %lu (err %d)",
 				   inode->i_ino, err);
 			goto stop_handle;
 		}
@@ -324,6 +333,7 @@ void scext4_evict_inode(struct inode *inode)
 				      extra_credits);
 	if (err) {
 		scext4_warning(inode->i_sb, "xattr delete (err %d)", err);
+		printk("xattr delete (err %d)", err);
 stop_handle:
 		scext4_journal_stop(handle);
 		scext4_orphan_del(NULL, inode);
@@ -351,9 +361,11 @@ stop_handle:
 	 * having errors), but we can't free the inode if the mark_dirty
 	 * fails.
 	 */
-	if (scext4_mark_inode_dirty(handle, inode))
+	if (scext4_mark_inode_dirty(handle, inode)) {
+		printk("Mark inode dirty failed!!\n");
 		/* If that failed, just do the required in-core inode clear. */
 		scext4_clear_inode(inode);
+	}
 	else
 		scext4_free_inode(handle, inode);
 	scext4_journal_stop(handle);
@@ -1324,6 +1336,7 @@ static int scext4_write_begin(struct file *file, struct address_space *mapping,
 	 */
 retry_grab:
 	page = scext4_grab_cache_page_write_begin(mapping, index, flags);
+	//page = grab_cache_page_write_begin(mapping, index, flags);
 
 	if (!page)
 		return -ENOMEM;
@@ -1418,6 +1431,8 @@ static int write_end_fn(handle_t *handle, struct buffer_head *bh)
 	return ret;
 }
 
+extern void scext4_pagecache_isize_extended(struct inode *inode, loff_t from, loff_t to);
+
 /*
  * We need to pick up the new inode size which generic_commit_write gave us
  * `file' can be NULL - eg, when called from page_symlink().
@@ -1464,7 +1479,7 @@ static int scext4_write_end(struct file *file,
 	put_page(page);
 
 	if (old_size < pos && !verity)
-		pagecache_isize_extended(inode, old_size, pos);
+		scext4_pagecache_isize_extended(inode, old_size, pos);
 	/*
 	 * Don't mark the inode dirty under page lock. First, it unnecessarily
 	 * makes the holding time of page lock longer. Second, it forces lock
@@ -1584,7 +1599,7 @@ static int scext4_journalled_write_end(struct file *file,
 	put_page(page);
 
 	if (old_size < pos && !verity)
-		pagecache_isize_extended(inode, old_size, pos);
+		scext4_pagecache_isize_extended(inode, old_size, pos);
 
 	if (size_changed || inline_data) {
 		ret2 = scext4_mark_inode_dirty(handle, inode);
@@ -1704,6 +1719,9 @@ struct mpage_da_data {
 	unsigned int do_map:1;
 };
 
+extern unsigned scext4_pagevec_lookup_range(struct pagevec *pvec,
+		struct address_space *mapping, pgoff_t *start, pgoff_t end);
+
 static void mpage_release_unused_pages(struct mpage_da_data *mpd,
 				       bool invalidate)
 {
@@ -1728,7 +1746,7 @@ static void mpage_release_unused_pages(struct mpage_da_data *mpd,
 
 	pagevec_init(&pvec);
 	while (index <= end) {
-		nr_pages = pagevec_lookup_range(&pvec, mapping, &index, end);
+		nr_pages = scext4_pagevec_lookup_range(&pvec, mapping, &index, end);
 		if (nr_pages == 0)
 			break;
 		for (i = 0; i < nr_pages; i++) {
@@ -2400,7 +2418,7 @@ static int mpage_map_and_submit_buffers(struct mpage_da_data *mpd)
 
 	pagevec_init(&pvec);
 	while (start <= end) {
-		nr_pages = pagevec_lookup_range(&pvec, inode->i_mapping,
+		nr_pages = scext4_pagevec_lookup_range(&pvec, inode->i_mapping,
 						&start, end);
 		if (nr_pages == 0)
 			break;
@@ -2628,6 +2646,10 @@ static int scext4_da_writepages_trans_blocks(struct inode *inode)
 				MAX_WRITEPAGES_EXTENT_LEN + bpp - 1, bpp);
 }
 
+extern unsigned scext4_pagevec_lookup_range_tag(struct pagevec *pvec,
+		struct address_space *mapping, pgoff_t *index, pgoff_t end,
+		xa_mark_t tag);
+
 static int mpage_prepare_extent_to_map(struct mpage_da_data *mpd)
 {
 	struct address_space *mapping = mpd->inode->i_mapping;
@@ -2651,7 +2673,7 @@ static int mpage_prepare_extent_to_map(struct mpage_da_data *mpd)
 	mpd->map.m_len = 0;
 	mpd->next_page = index;
 	while (index <= end) {
-		nr_pages = pagevec_lookup_range_tag(&pvec, mapping, &index, end,
+		nr_pages = scext4_pagevec_lookup_range_tag(&pvec, mapping, &index, end,
 				tag);
 		if (nr_pages == 0)
 			goto out;
@@ -3076,6 +3098,7 @@ static int scext4_da_write_begin(struct file *file, struct address_space *mappin
 	 */
 retry_grab:
 	page = scext4_grab_cache_page_write_begin(mapping, index, flags);
+	//page = grab_cache_page_write_begin(mapping, index, flags);
 	if (!page) {
 		return -ENOMEM;
 	}
@@ -3942,6 +3965,8 @@ static int scext4_set_page_dirty(struct page *page)
 	return __set_page_dirty_buffers(page);
 }
 
+int scext4_generic_error_remove_page(struct address_space *mapping, struct page *page);
+
 static const struct address_space_operations scext4_aops = {
 	.readpage		= scext4_readpage,
 	.readpages		= scext4_readpages,
@@ -3956,7 +3981,7 @@ static const struct address_space_operations scext4_aops = {
 	.direct_IO		= scext4_direct_IO,
 	.migratepage		= buffer_migrate_page,
 	.is_partially_uptodate  = block_is_partially_uptodate,
-	.error_remove_page	= generic_error_remove_page,
+	.error_remove_page	= scext4_generic_error_remove_page,
 };
 
 static const struct address_space_operations scext4_journalled_aops = {
@@ -3972,7 +3997,7 @@ static const struct address_space_operations scext4_journalled_aops = {
 	.releasepage		= scext4_releasepage,
 	.direct_IO		= scext4_direct_IO,
 	.is_partially_uptodate  = block_is_partially_uptodate,
-	.error_remove_page	= generic_error_remove_page,
+	.error_remove_page	= scext4_generic_error_remove_page,
 };
 
 static const struct address_space_operations scext4_da_aops = {
@@ -3989,7 +4014,7 @@ static const struct address_space_operations scext4_da_aops = {
 	.direct_IO		= scext4_direct_IO,
 	.migratepage		= buffer_migrate_page,
 	.is_partially_uptodate  = block_is_partially_uptodate,
-	.error_remove_page	= generic_error_remove_page,
+	.error_remove_page	= scext4_generic_error_remove_page,
 };
 
 static const struct address_space_operations scext4_dax_aops = {
@@ -4270,6 +4295,8 @@ int scext4_break_layouts(struct inode *inode)
 	return error;
 }
 
+extern void scext4_truncate_pagecache_range(struct inode *inode, loff_t lstart, loff_t lend);
+
 /*
  * scext4_punch_hole: punches a hole in a file by releasing the blocks
  * associated with the given offset and length
@@ -4365,7 +4392,7 @@ int scext4_punch_hole(struct inode *inode, loff_t offset, loff_t length)
 		ret = scext4_update_disksize_before_punch(inode, offset, length);
 		if (ret)
 			goto out_dio;
-		truncate_pagecache_range(inode, first_block_offset,
+		scext4_truncate_pagecache_range(inode, first_block_offset,
 					 last_block_offset);
 	}
 
@@ -5537,6 +5564,8 @@ static void scext4_wait_for_tail_page_commit(struct inode *inode)
 	}
 }
 
+extern void scext4_truncate_pagecache(struct inode *inode, loff_t newsize);
+
 /*
  * scext4_setattr()
  *
@@ -5705,7 +5734,7 @@ int scext4_setattr(struct dentry *dentry, struct iattr *attr)
 			if (error)
 				goto out_mmap_sem;
 			if (!shrink) {
-				pagecache_isize_extended(inode, oldsize,
+				scext4_pagecache_isize_extended(inode, oldsize,
 							 inode->i_size);
 			} else if (scext4_should_journal_data(inode)) {
 				scext4_wait_for_tail_page_commit(inode);
@@ -5716,7 +5745,7 @@ int scext4_setattr(struct dentry *dentry, struct iattr *attr)
 		 * Truncate pagecache after we've waited for commit
 		 * in data=journal mode to make pages freeable.
 		 */
-		truncate_pagecache(inode, inode->i_size);
+		scext4_truncate_pagecache(inode, inode->i_size);
 		/*
 		 * Call scext4_truncate() even if i_size didn't change to
 		 * truncate possible preallocated blocks.
@@ -6367,6 +6396,7 @@ vm_fault_t scext4_filemap_fault(struct vm_fault *vmf)
 
 	down_read(&SCEXT4_I(inode)->i_mmap_sem);
 	ret = scext4_filemap_fault_internal(vmf);
+	//ret = filemap_fault(vmf);
 	up_read(&SCEXT4_I(inode)->i_mmap_sem);
 
 	return ret;

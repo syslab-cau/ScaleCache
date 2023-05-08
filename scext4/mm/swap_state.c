@@ -25,6 +25,8 @@
 #include <asm/pgtable.h>
 #include "internal.h"
 
+#include "../lf_xarray/lf_xarray.h"
+
 #define ADD_CACHE_INFO(x, nr)	do { swap_cache_info.x += (nr); } while (0)
 
 extern struct {
@@ -43,17 +45,17 @@ void __scext4_delete_from_swap_cache(struct page *page, swp_entry_t entry)
 	struct address_space *address_space = swap_address_space(entry);
 	int i, nr = hpage_nr_pages(page);
 	pgoff_t idx = swp_offset(entry);
-	XA_STATE(xas, &address_space->i_pages, idx);
+	LF_XA_STATE(xas, &address_space->i_pages, idx);
 
 	VM_BUG_ON_PAGE(!PageLocked(page), page);
 	VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 	VM_BUG_ON_PAGE(PageWriteback(page), page);
 
 	for (i = 0; i < nr; i++) {
-		void *entry = xas_store(&xas, NULL);
+		void *entry = lf_xas_store(&xas, NULL);
 		VM_BUG_ON_PAGE(entry != page, entry);
 		set_page_private(page + i, 0);
-		xas_next(&xas);
+		lf_xas_next(&xas);
 	}
 	ClearPageSwapCache(page);
 	address_space->nrpages -= nr;

@@ -124,14 +124,14 @@
 static void page_cache_delete(struct address_space *mapping,
 				   struct page *page, void *shadow)
 {
-	XA_STATE(xas, &mapping->i_pages, page->index);
+	LF_XA_STATE(xas, &mapping->i_pages, page->index);
 	unsigned int nr = 1;
 
 	mapping_set_update(&xas, mapping);
 
 	/* hugetlb pages are represented by a single entry in the xarray */
 	if (!PageHuge(page)) {
-		xas_set_order(&xas, page->index, compound_order(page));
+		lf_xas_set_order(&xas, page->index, compound_order(page));
 		nr = compound_nr(page);
 	}
 
@@ -141,12 +141,14 @@ static void page_cache_delete(struct address_space *mapping,
 
 	lf_xas_store(&xas, shadow);
 	xas_init_marks(&xas);
+	
+	lf_xas_clear_xa_node(&xas);
 
 	page->mapping = NULL;
 	/* Leave page->index set: truncation lookup relies upon it */
 
 	smp_mb();
-	lf_xas_lock(&xas);
+	spin_lock(&mapping->nr_lock);
 	if (shadow) {
 		mapping->nrexceptional += nr;
 		/*
@@ -159,7 +161,10 @@ static void page_cache_delete(struct address_space *mapping,
 
 	}
 	mapping->nrpages -= nr;
-	lf_xas_unlock(&xas);
+	spin_unlock(&mapping->nr_lock);
+
+	//if (xas.xa_node->refcnt != 0)
+	//	printk("xas->xa_node->refcnt is not cleared!!\n");
 }
 
 static void unaccount_page_cache_page(struct address_space *mapping,
@@ -304,18 +309,18 @@ void scext4_delete_from_page_cache(struct page *page)
 static void page_cache_delete_batch(struct address_space *mapping,
 			     struct pagevec *pvec)
 {
-	XA_STATE(xas, &mapping->i_pages, pvec->pages[0]->index);
+	LF_XA_STATE(xas, &mapping->i_pages, pvec->pages[0]->index);
 	int total_pages = 0;
 	int i = 0;
 	struct page *page;
 
 	mapping_set_update(&xas, mapping);
-	xas_for_each(&xas, page, ULONG_MAX) {
+	lf_xas_for_each(&xas, page, ULONG_MAX) {
 		if (i >= pagevec_count(pvec))
 			break;
 
 		/* A swap/dax/shadow entry got inserted? Skip it. */
-		if (xa_is_value(page))
+		if (lf_xa_is_value(page))
 			continue;
 		/*
 		 * A page got inserted in our range? Skip it. We have our
@@ -343,10 +348,14 @@ static void page_cache_delete_batch(struct address_space *mapping,
 		 */
 		if (page->index + compound_nr(page) - 1 == xas.xa_index)
 			i++;
-		xas_store(&xas, NULL);
+		lf_xas_store(&xas, NULL);
 		total_pages++;
 	}
+	lf_xas_clear_xa_node(&xas);
+	
+	spin_lock(&mapping->nr_lock);
 	mapping->nrpages -= total_pages;
+	spin_unlock(&mapping->nr_lock);
 }
 
 void scext4_delete_from_page_cache_batch(struct address_space *mapping,
@@ -483,7 +492,7 @@ bool scext4_filemap_range_has_page(struct address_space *mapping,
 			   loff_t start_byte, loff_t end_byte)
 {
 	struct page *page;
-	XA_STATE(xas, &mapping->i_pages, start_byte >> PAGE_SHIFT);
+	LF_XA_STATE(xas, &mapping->i_pages, start_byte >> PAGE_SHIFT);
 	pgoff_t max = end_byte >> PAGE_SHIFT;
 
 	if (end_byte < start_byte)
@@ -491,11 +500,11 @@ bool scext4_filemap_range_has_page(struct address_space *mapping,
 
 	rcu_read_lock();
 	for (;;) {
-		page = xas_find(&xas, max);
-		if (xas_retry(&xas, page))
+		page = lf_xas_find(&xas, max);
+		if (lf_xas_retry(&xas, page))
 			continue;
 		/* Shadow entries don't count */
-		if (xa_is_value(page))
+		if (lf_xa_is_value(page))
 			continue;
 		/*
 		 * We don't need to try to pin this page; we're about to
@@ -509,6 +518,10 @@ bool scext4_filemap_range_has_page(struct address_space *mapping,
 	return page != NULL;
 }
 //EXPORT_SYMBOL(filemap_range_has_page);
+
+extern unsigned scext4_pagevec_lookup_range_tag(struct pagevec *pvec,
+		struct address_space *mapping, pgoff_t *index, pgoff_t end,
+		xa_mark_t tag);
 
 static void __filemap_fdatawait_range(struct address_space *mapping,
 				     loff_t start_byte, loff_t end_byte)
@@ -525,7 +538,7 @@ static void __filemap_fdatawait_range(struct address_space *mapping,
 	while (index <= end) {
 		unsigned i;
 
-		nr_pages = pagevec_lookup_range_tag(&pvec, mapping, &index,
+		nr_pages = scext4_pagevec_lookup_range_tag(&pvec, mapping, &index,
 				end, PAGECACHE_TAG_WRITEBACK);
 		if (!nr_pages)
 			break;
@@ -825,7 +838,7 @@ int scext4_replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp
 	struct address_space *mapping = old->mapping;
 	void (*freepage)(struct page *) = mapping->a_ops->freepage;
 	pgoff_t offset = old->index;
-	XA_STATE(xas, &mapping->i_pages, offset);
+	LF_XA_STATE(xas, &mapping->i_pages, offset);
 	unsigned long flags;
 
 	VM_BUG_ON_PAGE(!PageLocked(old), old);
@@ -840,9 +853,9 @@ int scext4_replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp
 
 	preempt_disable();
 	local_irq_save(flags);
-	xas_lock(&xas);
+	//xas_lock(&xas);
 
-	xas_store(&xas, new);
+	lf_xas_store(&xas, new);
 
 	old->mapping = NULL;
 	
@@ -859,7 +872,7 @@ int scext4_replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp
 
 	//xas_unlock_irqrestore(&xas, flags);
 
-	xas_unlock(&xas);
+	//xas_unlock(&xas);
 	preempt_enable();
 	local_irq_restore(flags);
 
@@ -886,7 +899,7 @@ noinline int __scext4_add_to_page_cache_locked_optimized(struct page *page,
 					pgoff_t offset, gfp_t gfp_mask,
 					void **shadowp)
 {
-	XA_STATE(xas, &mapping->i_pages, offset);
+	LF_XA_STATE(xas, &mapping->i_pages, offset);
 	int huge = PageHuge(page);
 	struct mem_cgroup *memcg;
 	int error;
@@ -908,20 +921,20 @@ noinline int __scext4_add_to_page_cache_locked_optimized(struct page *page,
 	gfp_mask &= GFP_RECLAIM_MASK;
 
 	do {
-		unsigned int order = xa_get_order(xas.xa, xas.xa_index);
+		unsigned int order = lf_xa_get_order(xas.xa, xas.xa_index);
 		void *entry, *old = NULL;
 
 		if (order > thp_order(page))
-			xas_split_alloc(&xas, xa_load(xas.xa, xas.xa_index),
+			lf_xas_split_alloc(&xas, lf_xa_load(xas.xa, xas.xa_index),
 					order, gfp_mask);
-		//local_irq_disable();
-		//preempt_disable();
-		xas_lock_irq(&xas);
+		local_irq_disable();
+		preempt_disable();
+		//xas_lock_irq(&xas);
 
 		lf_xas_for_each_conflict(&xas, entry) {
 			old = entry;
-			if (!xa_is_value(entry)) {
-				xas_set_err(&xas, -EEXIST);
+			if (!lf_xa_is_value(entry)) {
+				lf_xas_set_err(&xas, -EEXIST);
 				goto unlock;
 			}
 		}
@@ -930,38 +943,48 @@ noinline int __scext4_add_to_page_cache_locked_optimized(struct page *page,
 			if (shadowp)
 				*shadowp = old;
 			/* entry may have been split before we acquired lock */
-			order = xa_get_order(xas.xa, xas.xa_index);
+			order = lf_xa_get_order(xas.xa, xas.xa_index);
 			if (order > thp_order(page)) {
-				xas_split(&xas, old, order);
-				xas_reset(&xas);
+				lf_xas_split(&xas, old, order);
+				lf_xas_reset(&xas);
 			}
 		}
 
 		//xas_lock(&xas);
 		lf_xas_store(&xas, page);
 		smp_mb();
-		if (xas_error(&xas))
+		if (lf_xas_error(&xas))
 			goto unlock;
 
 		//smp_mb();
 
+		spin_lock(&mapping->nr_lock);
 		if (old)
 			mapping->nrexceptional--;
 		mapping->nrpages++;
+		spin_unlock(&mapping->nr_lock);
 
 		/* hugetlb pages do not participate in page cache accounting */
 		if (!huge)
 			__inc_node_page_state(page, NR_FILE_PAGES);
 unlock:
-		xas_unlock_irq(&xas);
-	} while (xas_nomem(&xas, gfp_mask));
+		//xas_unlock_irq(&xas);
+		local_irq_enable();
+		preempt_enable();
+	} while (lf_xas_nomem(&xas, gfp_mask));
 
-	if (xas_error(&xas))
+	if (lf_xas_error(&xas))
 		goto error;
+	
+	lf_xas_clear_xa_node(&xas);
 
 	if (!huge)
 		scext4_mem_cgroup_commit_charge(page, memcg, false, false);
 	//trace_mm_filemap_add_to_page_cache(page);
+	
+	//if (xas.xa_node->refcnt != 0)
+	//	printk("xas->xa_node->refcnt is not cleared!!\n");
+	
 	return 0;
 error:
 	page->mapping = NULL;
@@ -969,7 +992,7 @@ error:
 	if (!huge)
 		scext4_mem_cgroup_cancel_charge(page, memcg, false);
 	put_page(page);
-	return xas_error(&xas);
+	return lf_xas_error(&xas);
 }
 ALLOW_ERROR_INJECTION(__scext4_add_to_page_cache_locked_optimized, ERRNO);
 
@@ -1441,15 +1464,17 @@ void scext4_page_endio(struct page *page, bool is_write, int err)
 pgoff_t scext4_page_cache_next_miss(struct address_space *mapping,
 			     pgoff_t index, unsigned long max_scan)
 {
-	XA_STATE(xas, &mapping->i_pages, index);
+	LF_XA_STATE(xas, &mapping->i_pages, index);
 
 	while (max_scan--) {
-		void *entry = xas_next(&xas);
-		if (!entry || xa_is_value(entry))
+		void *entry = lf_xas_next(&xas);
+		if (!entry || lf_xa_is_value(entry))
 			break;
 		if (xas.xa_index == 0)
 			break;
 	}
+	
+	lf_xas_clear_xa_node(&xas);
 
 	return xas.xa_index;
 }
@@ -1477,15 +1502,17 @@ pgoff_t scext4_page_cache_next_miss(struct address_space *mapping,
 pgoff_t scext4_page_cache_prev_miss(struct address_space *mapping,
 			     pgoff_t index, unsigned long max_scan)
 {
-	XA_STATE(xas, &mapping->i_pages, index);
+	LF_XA_STATE(xas, &mapping->i_pages, index);
 
 	while (max_scan--) {
-		void *entry = xas_prev(&xas);
-		if (!entry || xa_is_value(entry))
+		void *entry = lf_xas_prev(&xas);
+		if (!entry || lf_xa_is_value(entry))
 			break;
 		if (xas.xa_index == ULONG_MAX)
 			break;
 	}
+	
+	lf_xas_clear_xa_node(&xas);
 
 	return xas.xa_index;
 }
@@ -1506,20 +1533,20 @@ pgoff_t scext4_page_cache_prev_miss(struct address_space *mapping,
  */
 struct page *scext4_find_get_entry(struct address_space *mapping, pgoff_t offset)
 {
-	XA_STATE(xas, &mapping->i_pages, offset);
+	LF_XA_STATE(xas, &mapping->i_pages, offset);
 	struct page *page;
 
 	rcu_read_lock();
 repeat:
-	xas_reset(&xas);
+	lf_xas_reset(&xas);
 	page = lf_xas_load(&xas);
-	if (xas_retry(&xas, page))
+	if (lf_xas_retry(&xas, page))
 		goto repeat;
 	/*
 	 * A shadow entry of a recently evicted page, or a swap entry from
 	 * shmem/tmpfs.  Return it without attempting to raise page count.
 	 */
-	if (!page || xa_is_value(page))
+	if (!page || lf_xa_is_value(page))
 		goto out;
 
 	if (!page_cache_get_speculative(page))
@@ -1530,13 +1557,15 @@ repeat:
 	 * This is part of the lockless pagecache protocol. See
 	 * include/linux/pagemap.h for details.
 	 */
-	if (unlikely(page != xas_reload(&xas))) {
+	if (unlikely(page != lf_xas_reload(&xas))) {
 		put_page(page);
 		goto repeat;
 	}
 	page = find_subpage(page, offset);
 out:
 	rcu_read_unlock();
+	
+	lf_xas_clear_xa_node(&xas);
 
 	return page;
 }
@@ -1608,13 +1637,13 @@ repeat:
  *
  * Return: the found page or %NULL otherwise.
  */
-static struct page *scext4_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
+struct page *scext4_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
 	int fgp_flags, gfp_t gfp_mask)
 {
 	struct page *page;
 
 repeat:
-	page = find_get_entry(mapping, offset);
+	page = scext4_find_get_entry(mapping, offset);
 	if (xa_is_value(page))
 		page = NULL;
 	if (!page)
@@ -1705,7 +1734,7 @@ unsigned scext4_find_get_entries(struct address_space *mapping,
 			  pgoff_t start, unsigned int nr_entries,
 			  struct page **entries, pgoff_t *indices)
 {
-	XA_STATE(xas, &mapping->i_pages, start);
+	LF_XA_STATE(xas, &mapping->i_pages, start);
 	struct page *page;
 	unsigned int ret = 0;
 
@@ -1713,22 +1742,22 @@ unsigned scext4_find_get_entries(struct address_space *mapping,
 		return 0;
 
 	rcu_read_lock();
-	xas_for_each(&xas, page, ULONG_MAX) {
-		if (xas_retry(&xas, page))
+	lf_xas_for_each(&xas, page, ULONG_MAX) {
+		if (lf_xas_retry(&xas, page))
 			continue;
 		/*
 		 * A shadow entry of a recently evicted page, a swap
 		 * entry from shmem/tmpfs or a DAX entry.  Return it
 		 * without attempting to raise page count.
 		 */
-		if (xa_is_value(page))
+		if (lf_xa_is_value(page))
 			goto export;
 
 		if (!page_cache_get_speculative(page))
 			goto retry;
 
 		/* Has the page moved or been split? */
-		if (unlikely(page != xas_reload(&xas)))
+		if (unlikely(page != lf_xas_reload(&xas)))
 			goto put_page;
 		page = find_subpage(page, xas.xa_index);
 
@@ -1741,9 +1770,10 @@ export:
 put_page:
 		put_page(page);
 retry:
-		xas_reset(&xas);
+		lf_xas_reset(&xas);
 	}
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(&xas);
 	return ret;
 }
 
@@ -1772,7 +1802,7 @@ unsigned scext4_find_get_pages_range(struct address_space *mapping, pgoff_t *sta
 			      pgoff_t end, unsigned int nr_pages,
 			      struct page **pages)
 {
-	XA_STATE(xas, &mapping->i_pages, *start);
+	LF_XA_STATE(xas, &mapping->i_pages, *start);
 	struct page *page;
 	unsigned ret = 0;
 
@@ -1780,18 +1810,18 @@ unsigned scext4_find_get_pages_range(struct address_space *mapping, pgoff_t *sta
 		return 0;
 
 	rcu_read_lock();
-	xas_for_each(&xas, page, end) {
-		if (xas_retry(&xas, page))
+	lf_xas_for_each(&xas, page, end) {
+		if (lf_xas_retry(&xas, page))
 			continue;
 		/* Skip over shadow, swap and DAX entries */
-		if (xa_is_value(page))
+		if (lf_xa_is_value(page))
 			continue;
 
 		if (!page_cache_get_speculative(page))
 			goto retry;
 
 		/* Has the page moved or been split? */
-		if (unlikely(page != xas_reload(&xas)))
+		if (unlikely(page != lf_xas_reload(&xas)))
 			goto put_page;
 
 		pages[ret] = find_subpage(page, xas.xa_index);
@@ -1803,7 +1833,7 @@ unsigned scext4_find_get_pages_range(struct address_space *mapping, pgoff_t *sta
 put_page:
 		put_page(page);
 retry:
-		xas_reset(&xas);
+		lf_xas_reset(&xas);
 	}
 
 	/*
@@ -1818,6 +1848,7 @@ retry:
 		*start = end + 1;
 out:
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(&xas);
 
 	return ret;
 }
@@ -1838,7 +1869,7 @@ out:
 unsigned scext4_find_get_pages_contig(struct address_space *mapping, pgoff_t index,
 			       unsigned int nr_pages, struct page **pages)
 {
-	XA_STATE(xas, &mapping->i_pages, index);
+	LF_XA_STATE(xas, &mapping->i_pages, index);
 	struct page *page;
 	unsigned int ret = 0;
 
@@ -1846,21 +1877,21 @@ unsigned scext4_find_get_pages_contig(struct address_space *mapping, pgoff_t ind
 		return 0;
 
 	rcu_read_lock();
-	for (page = xas_load(&xas); page; page = xas_next(&xas)) {
-		if (xas_retry(&xas, page))
+	for (page = lf_xas_load(&xas); page; page = lf_xas_next(&xas)) {
+		if (lf_xas_retry(&xas, page))
 			continue;
 		/*
 		 * If the entry has been swapped out, we can stop looking.
 		 * No current caller is looking for DAX entries.
 		 */
-		if (xa_is_value(page))
+		if (lf_xa_is_value(page))
 			break;
 
 		if (!page_cache_get_speculative(page))
 			goto retry;
 
 		/* Has the page moved or been split? */
-		if (unlikely(page != xas_reload(&xas)))
+		if (unlikely(page != lf_xas_reload(&xas)))
 			goto put_page;
 
 		pages[ret] = find_subpage(page, xas.xa_index);
@@ -1870,9 +1901,10 @@ unsigned scext4_find_get_pages_contig(struct address_space *mapping, pgoff_t ind
 put_page:
 		put_page(page);
 retry:
-		xas_reset(&xas);
+		lf_xas_reset(&xas);
 	}
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(&xas);
 	return ret;
 }
 //EXPORT_SYMBOL(find_get_pages_contig);
@@ -1895,7 +1927,7 @@ unsigned scext4_find_get_pages_range_tag(struct address_space *mapping, pgoff_t 
 			pgoff_t end, xa_mark_t tag, unsigned int nr_pages,
 			struct page **pages)
 {
-	XA_STATE(xas, &mapping->i_pages, *index);
+	LF_XA_STATE(xas, &mapping->i_pages, *index);
 	struct page *page;
 	unsigned ret = 0;
 
@@ -1903,22 +1935,22 @@ unsigned scext4_find_get_pages_range_tag(struct address_space *mapping, pgoff_t 
 		return 0;
 
 	rcu_read_lock();
-	xas_for_each_marked(&xas, page, end, tag) {
-		if (xas_retry(&xas, page))
+	lf_xas_for_each_marked(&xas, page, end, tag) {
+		if (lf_xas_retry(&xas, page))
 			continue;
 		/*
 		 * Shadow entries should never be tagged, but this iteration
 		 * is lockless so there is a window for page reclaim to evict
 		 * a page we saw tagged.  Skip over it.
 		 */
-		if (xa_is_value(page))
+		if (lf_xa_is_value(page))
 			continue;
 
 		if (!page_cache_get_speculative(page))
 			goto retry;
 
 		/* Has the page moved or been split? */
-		if (unlikely(page != xas_reload(&xas)))
+		if (unlikely(page != lf_xas_reload(&xas)))
 			goto put_page;
 
 		pages[ret] = find_subpage(page, xas.xa_index);
@@ -1930,7 +1962,7 @@ unsigned scext4_find_get_pages_range_tag(struct address_space *mapping, pgoff_t 
 put_page:
 		put_page(page);
 retry:
-		xas_reset(&xas);
+		lf_xas_reset(&xas);
 	}
 
 	/*
@@ -1945,6 +1977,7 @@ retry:
 		*index = end + 1;
 out:
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(&xas);
 
 	return ret;
 }
@@ -2588,14 +2621,14 @@ void scext4_filemap_map_pages(struct vm_fault *vmf,
 	struct address_space *mapping = file->f_mapping;
 	pgoff_t last_pgoff = start_pgoff;
 	unsigned long max_idx;
-	XA_STATE(xas, &mapping->i_pages, start_pgoff);
+	LF_XA_STATE(xas, &mapping->i_pages, start_pgoff);
 	struct page *page;
 
 	rcu_read_lock();
-	xas_for_each(&xas, page, end_pgoff) {
-		if (xas_retry(&xas, page))
+	lf_xas_for_each(&xas, page, end_pgoff) {
+		if (lf_xas_retry(&xas, page))
 			continue;
-		if (xa_is_value(page))
+		if (lf_xa_is_value(page))
 			goto next;
 
 		/*
@@ -2608,7 +2641,7 @@ void scext4_filemap_map_pages(struct vm_fault *vmf,
 			goto next;
 
 		/* Has the page moved or been split? */
-		if (unlikely(page != xas_reload(&xas)))
+		if (unlikely(page != lf_xas_reload(&xas)))
 			goto skip;
 		page = find_subpage(page, xas.xa_index);
 
@@ -2647,6 +2680,7 @@ next:
 			break;
 	}
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(&xas);
 }
 //EXPORT_SYMBOL(filemap_map_pages);
 
@@ -3251,6 +3285,9 @@ again:
 	return written ? written : status;
 }
 
+unsigned long scext4_invalidate_mapping_pages(struct address_space *mapping,
+		pgoff_t start, pgoff_t end);
+
 /**
  * __generic_file_write_iter - write data to a file
  * @iocb:	IO state structure (file, offset, etc.)
@@ -3327,7 +3364,7 @@ ssize_t __scext4_generic_file_write_iter(struct kiocb *iocb, struct iov_iter *fr
 		if (err == 0) {
 			iocb->ki_pos = endbyte + 1;
 			written += status;
-			invalidate_mapping_pages(mapping,
+			scext4_invalidate_mapping_pages(mapping,
 						 pos >> PAGE_SHIFT,
 						 endbyte >> PAGE_SHIFT);
 		} else {

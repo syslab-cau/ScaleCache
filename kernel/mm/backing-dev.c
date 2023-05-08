@@ -295,6 +295,7 @@ static int wb_init(struct bdi_writeback *wb, struct backing_dev_info *bdi,
 		bdi_get(bdi);
 	wb->bdi = bdi;
 	wb->last_old_flush = jiffies;
+	wb->nr_threads = 0;
 	INIT_LIST_HEAD(&wb->b_dirty);
 	INIT_LIST_HEAD(&wb->b_io);
 	INIT_LIST_HEAD(&wb->b_more_io);

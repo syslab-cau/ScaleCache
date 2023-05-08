@@ -87,8 +87,8 @@ __scext4_find_get_block_slow(struct block_device *bdev, sector_t block)
 	if (!page)
 		goto out;
 	
-	//spin_lock(&bd_mapping->private_lock);
-	lock_page(page);	// seokjoo
+	spin_lock(&bd_mapping->private_lock);
+	//lock_page(page);	// seokjoo
 	
 	if (!page_has_buffers(page))
 		goto out_unlock;
@@ -121,8 +121,8 @@ __scext4_find_get_block_slow(struct block_device *bdev, sector_t block)
 		       1 << bd_inode->i_blkbits);
 	}
 out_unlock:
-	unlock_page(page);
-	//spin_unlock(&bd_mapping->private_lock);
+	//unlock_page(page);
+	spin_unlock(&bd_mapping->private_lock);
 	put_page(page);
 out:
 	return ret;

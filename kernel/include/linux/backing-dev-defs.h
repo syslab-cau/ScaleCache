@@ -132,6 +132,7 @@ struct bdi_writeback {
 
 	unsigned long state;		/* Always use atomic bitops on this */
 	unsigned long last_old_flush;	/* last old data flush */
+	unsigned long nr_threads;	/* Number of threads using this wb */
 
 	struct list_head b_dirty;	/* dirty inodes */
 	struct list_head b_io;		/* parked for writeback */

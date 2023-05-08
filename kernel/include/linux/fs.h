@@ -455,6 +455,7 @@ struct address_space {
 	struct rw_semaphore	i_mmap_rwsem;
 	unsigned long		nrpages;
 	unsigned long		nrexceptional;
+	spinlock_t		nr_lock;
 	pgoff_t			writeback_index;
 	const struct address_space_operations *a_ops;
 	unsigned long		flags;

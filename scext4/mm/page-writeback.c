@@ -42,6 +42,8 @@
 
 #include "internal.h"
 
+#include "../lf_xarray/lf_xarray.h"
+
 /*
  * Sleep at most 200ms at a time in balance_dirty_pages().
  */
@@ -2120,22 +2122,24 @@ void __init page_writeback_init(void)
 void scext4_tag_pages_for_writeback(struct address_space *mapping,
 			     pgoff_t start, pgoff_t end)
 {
-	XA_STATE(xas, &mapping->i_pages, start);
+	LF_XA_STATE(xas, &mapping->i_pages, start);
 	unsigned int tagged = 0;
 	void *page;
 
+	//TODO: Can we remove this lock? Is this lock unnecessary?
 	xas_lock_irq(&xas);
-	xas_for_each_marked(&xas, page, end, PAGECACHE_TAG_DIRTY) {
-		xas_set_mark(&xas, PAGECACHE_TAG_TOWRITE);
+	lf_xas_for_each_marked(&xas, page, end, PAGECACHE_TAG_DIRTY) {
+		lf_xas_set_mark(&xas, PAGECACHE_TAG_TOWRITE); // TODO: make this as lock-free!!
 		if (++tagged % XA_CHECK_SCHED)
 			continue;
 
-		xas_pause(&xas);
+		lf_xas_pause(&xas);
 		xas_unlock_irq(&xas);
 		cond_resched();
 		xas_lock_irq(&xas);
 	}
 	xas_unlock_irq(&xas);
+	lf_xas_clear_xa_node(&xas);
 }
 
 extern int write_one_page(struct page *page);
@@ -2229,7 +2233,7 @@ int test_clear_page_writeback(struct page *page)
 		xa_lock_irqsave(&mapping->i_pages, flags);
 		ret = TestClearPageWriteback(page);
 		if (ret) {
-			__xa_clear_mark(&mapping->i_pages, page_index(page),
+			__lf_xa_clear_mark(&mapping->i_pages, page_index(page),
 						PAGECACHE_TAG_WRITEBACK);
 			if (bdi_cap_account_writeback(bdi)) {
 				struct bdi_writeback *wb = inode_to_wb(inode);
@@ -2238,6 +2242,8 @@ int test_clear_page_writeback(struct page *page)
 				__wb_writeout_inc(wb);
 			}
 		}
+		if (mapping_tagged(mapping, PAGECACHE_TAG_WRITEBACK))
+			printk("mapping PAGECACHE_TAG_WRITEBACK still tagged!!\n");
 
 		if (mapping->host && !mapping_tagged(mapping,
 						     PAGECACHE_TAG_WRITEBACK))

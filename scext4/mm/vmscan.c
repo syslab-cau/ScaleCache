@@ -502,6 +502,7 @@ static int __remove_mapping(struct address_space *mapping, struct page *page,
 			shadow = workingset_eviction(page);
 		preempt_disable();
 		__scext4_delete_from_page_cache(page, shadow); 
+		//__delete_from_page_cache(page, shadow); 
 		local_irq_restore(flags);
 		preempt_enable();
 
@@ -514,6 +515,26 @@ static int __remove_mapping(struct address_space *mapping, struct page *page,
 cannot_free:
 	local_irq_restore(flags);
 	preempt_enable();
+	return 0;
+}
+
+/*
+ * Attempt to detach a locked page from its ->mapping.  If it is dirty or if
+ * someone else has a ref on the page, abort and return 0.  If it was
+ * successfully detached, return 1.  Assumes the caller has a single ref on
+ * this page.
+ */
+int scext4_remove_mapping(struct address_space *mapping, struct page *page)
+{
+	if (__remove_mapping(mapping, page, false)) {
+		/*
+		 * Unfreezing the refcount with 1 rather than 2 effectively
+		 * drops the pagecache ref for us without requiring another
+		 * atomic operation.
+		 */
+		page_ref_unfreeze(page, 1);
+		return 1;
+	}
 	return 0;
 }
 

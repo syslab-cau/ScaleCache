@@ -945,13 +945,15 @@ static long scext4_wb_check_start_all(struct bdi_writeback *wb)
 }
 
 /*
- * Retrieve work items and do the writeback they describe
+ * User thread do the writeback works they describe
  */
-//sysganda: user thread
 long scext4_wb_do_writeback_modified(struct bdi_writeback *wb)
 {
 	long wrote = 0;
 
+	if (!__sync_fetch_and_add(&wb->nr_threads, 1))
+		set_bit(WB_writeback_running, &wb->state);
+	
 	//wrote += scext4_wb_check_start_all(wb);
 	wrote += wb_check_start_all(wb);
 
@@ -960,6 +962,9 @@ long scext4_wb_do_writeback_modified(struct bdi_writeback *wb)
 
 	wrote += scext4_wb_check_background_flush(wb);
 	//wrote += wb_check_background_flush(wb);
+	
+	if (__sync_sub_and_fetch(&wb->nr_threads, 1))
+		clear_bit(WB_writeback_running, &wb->state);
 	
 	return wrote;
 }
@@ -972,22 +977,26 @@ static long scext4_wb_do_writeback(struct bdi_writeback *wb)
 	struct wb_writeback_work *work;
 	long wrote = 0;
 
+	if (!__sync_fetch_and_add(&wb->nr_threads, 1))
+		set_bit(WB_writeback_running, &wb->state);
 	while ((work = scext4_get_next_work_item(wb)) != NULL) {
 		//trace_writeback_exec(wb, work);
 		wrote += scext4_wb_writeback(wb, work);
 		finish_writeback_work(wb, work);
 	}
 
+	/*
+	 * Check for a flush-everything request
+	 */
 	wrote += scext4_wb_check_start_all(wb);
 
 	/*
 	 * Check for periodic writeback, kupdated() style
 	 */
 	wrote += scext4_wb_check_old_data_flush(wb);
-	
 	wrote += scext4_wb_check_background_flush(wb);
-
-	clear_bit(WB_writeback_running, &wb->state);
+	if (__sync_sub_and_fetch(&wb->nr_threads, 1))
+		clear_bit(WB_writeback_running, &wb->state);
 
 	return wrote;
 }

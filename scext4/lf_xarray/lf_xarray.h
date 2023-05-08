@@ -1113,6 +1113,7 @@ void lf_xa_dump_node(const struct xa_node *);
 
 void lf_xa_garbage_collector(struct xarray *xa);
 
+#define LF_XA_DEBUG
 #ifdef LF_XA_DEBUG
 #define LF_XA_BUG_ON(xa, x) do {					\
 		if (x) {					\
@@ -1130,6 +1131,7 @@ void lf_xa_garbage_collector(struct xarray *xa);
 #define LF_XA_BUG_ON(xa, x)	do { } while (0)
 #define LF_XA_NODE_BUG_ON(node, x)	do { } while (0)
 #endif
+#undef LF_XA_DEBUG
 
 /* Private */
 static inline void *lf_xa_head(const struct xarray *xa)
@@ -1167,22 +1169,37 @@ static inline void *lf_xa_entry_locked(const struct xarray *xa,
 static inline struct xa_node *lf_xa_parent(const struct xarray *xa,
 					const struct xa_node *node)
 {
-	return rcu_dereference_check(node->parent,
+	struct xa_node *parent;
+	parent = rcu_dereference_check(node->parent,
 						lockdep_is_held(&xa->xa_lock));
+	//if (parent)
+	// do we need parent->gc_flag check here??
+	//	__sync_fetch_and_add(&parent->refcnt, 1);
+	return parent;
 }
 
 /* Private */
 static inline struct xa_node *lf_xa_parent_locked(const struct xarray *xa,
 					const struct xa_node *node)
 {
-	return rcu_dereference_protected(node->parent,
+	struct xa_node *parent;
+	parent = rcu_dereference_protected(node->parent,
 						lockdep_is_held(&xa->xa_lock));
+	//if (parent)
+	// do we need parent->gc_flag check here??
+	//	__sync_fetch_and_add(&parent->refcnt, 1);
+	return parent;
 }
 
 /* Private */
 static inline struct xa_node *lf_xa_parent_raw(const struct xa_node *node)
 {
-	return rcu_dereference_raw(node->parent);
+	struct xa_node *parent;
+	parent = rcu_dereference_raw(node->parent);
+	//if (parent)
+	// do we need parent->gc_flag check here??
+	//	__sync_fetch_and_add(&parent->refcnt, 1);
+	return parent;
 }
 
 /* Private */
@@ -1289,7 +1306,6 @@ struct lf_xa_state {
 	unsigned char xa_sibs;
 	unsigned char xa_offset;
 	unsigned char xa_pad;		/* Helps gcc generate better code */
-	unsigned char lf_xa_del;
 	struct xa_node *xa_node;
 	struct xa_node *xa_alloc;
 	xa_update_node_t xa_update;
@@ -1310,10 +1326,9 @@ struct lf_xa_state {
 	.xa_sibs = sibs,				\
 	.xa_offset = 0,					\
 	.xa_pad = 0,					\
-	.xa_node = LF_XAS_RESTART,				\
+	.xa_node = LF_XAS_RESTART,			\
 	.xa_alloc = NULL,				\
-	.xa_update = NULL,		\
-	.lf_xa_del = 0		\
+	.xa_update = NULL				\
 }
 
 /**
@@ -1357,6 +1372,38 @@ struct lf_xa_state {
 #define lf_xas_unlock_irqrestore(xas, flags) \
 					lf_xa_unlock_irqrestore((xas)->xa, flags)
 
+/* Private */
+static inline void lf_xa_put_node(struct xa_node *node)
+{
+	unsigned short refcnt;
+
+	LF_XA_NODE_BUG_ON(node, !node);
+	refcnt = __sync_sub_and_fetch(&node->refcnt, 1);
+	if (refcnt > 60000) {
+		printk("[WARNING!!] [@%px] after put_node refcnt: %hu (%s:%d)\n", node, node->refcnt, __func__, __LINE__);
+		LF_XA_NODE_BUG_ON(node, 1);
+	}
+}
+
+static inline bool lf_xas_not_node(struct xa_node *node);
+
+/* Private */
+static inline struct xa_node *lf_xa_get_node(struct xa_node *node)
+{
+	if (lf_xas_not_node(node))
+		return node;
+
+	//if (node->refcnt > 100) {
+	//	LF_XA_NODE_BUG_ON(node, 1);
+	//}
+	__sync_fetch_and_add(&node->refcnt, 1);
+	if (__sync_fetch_and_add(&node->gc_flag, 0)) {
+		lf_xa_put_node(node);
+		return LF_XAS_RESTART;
+	}
+	return node;
+}
+
 /**
  * lf_xas_error() - Return an errno stored in the xa_state.
  * @xas: XArray operation state.
@@ -1367,6 +1414,8 @@ static inline int lf_xas_error(const struct xa_state *xas)
 {
 	return lf_xa_err(xas->xa_node);
 }
+
+static inline void lf_xas_set_xa_node(struct xa_state *xas, struct xa_node *node);
 
 /**
  * lf_xas_set_err() - Note an error in the xa_state.
@@ -1379,7 +1428,8 @@ static inline int lf_xas_error(const struct xa_state *xas)
  */
 static inline void lf_xas_set_err(struct xa_state *xas, long err)
 {
-	xas->xa_node = LF_XA_ERROR(err);
+	//xas->xa_node = LF_XA_ERROR(err);
+	lf_xas_set_xa_node(xas, LF_XA_ERROR(err));
 }
 
 /**
@@ -1390,7 +1440,7 @@ static inline void lf_xas_set_err(struct xa_state *xas, long err)
  */
 static inline bool lf_xas_invalid(const struct xa_state *xas)
 {
-	return (unsigned long)xas->xa_node & 3;
+	return ((unsigned long)xas->xa_node & 3);
 }
 
 /**
@@ -1418,7 +1468,31 @@ static inline bool lf_xas_is_node(const struct xa_state *xas)
 /* True if the pointer is something other than a node */
 static inline bool lf_xas_not_node(struct xa_node *node)
 {
-	return ((unsigned long)node & 3) || !node;
+	return ((unsigned long)node & 3) || !node || node->gc_flag;
+}
+
+#if 1
+/* Set xas.xa_node and increase refcnt, after decreasing old xa_node refcnt */
+static inline void lf_xas_set_xa_node(struct xa_state *xas, struct xa_node *node)
+{
+	struct xa_node *old = xas->xa_node;
+
+	if (lf_xas_is_node(xas))
+		lf_xa_put_node(old);
+	xas->xa_node = lf_xa_get_node(node);
+}
+#else
+static inline void lf_xas_set_xa_node(struct xa_state *xas, struct xa_node *node)
+{
+	xas->xa_node = node;
+}
+#endif
+
+/* Decreases old xa_node refcnt */
+static inline void lf_xas_clear_xa_node(struct xa_state *xas)
+{
+	if (lf_xas_is_node(xas))
+		lf_xa_put_node(xas->xa_node);
 }
 
 /* True if the node represents RESTART or an error */
@@ -1445,7 +1519,8 @@ static inline bool lf_xas_top(struct xa_node *node)
  */
 static inline void lf_xas_reset(struct xa_state *xas)
 {
-	xas->xa_node = LF_XAS_RESTART;
+	//xas->xa_node = LF_XAS_RESTART;
+	lf_xas_set_xa_node(xas, LF_XAS_RESTART);
 }
 
 /**
@@ -1543,7 +1618,8 @@ static inline void *lf_xas_reload(struct xa_state *xas)
 static inline void lf_xas_set(struct xa_state *xas, unsigned long index)
 {
 	xas->xa_index = index;
-	xas->xa_node = LF_XAS_RESTART;
+	//xas->xa_node = LF_XAS_RESTART;
+	lf_xas_set_xa_node(xas, LF_XAS_RESTART);
 }
 
 /**
@@ -1559,7 +1635,8 @@ static inline void lf_xas_set_order(struct xa_state *xas, unsigned long index,
 	xas->xa_index = order < BITS_PER_LONG ? (index >> order) << order : 0;
 	xas->xa_shift = order - (order % LF_XA_CHUNK_SHIFT);
 	xas->xa_sibs = (1 << (order % LF_XA_CHUNK_SHIFT)) - 1;
-	xas->xa_node = LF_XAS_RESTART;
+	//xas->xa_node = LF_XAS_RESTART;
+	lf_xas_set_xa_node(xas, LF_XAS_RESTART);
 #else
 	BUG_ON(order > 0);
 	lf_xas_set(xas, index);

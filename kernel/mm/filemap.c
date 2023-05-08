@@ -140,6 +140,7 @@ static void page_cache_delete(struct address_space *mapping,
 	page->mapping = NULL;
 	/* Leave page->index set: truncation lookup relies upon it */
 
+	spin_lock(&mapping->nr_lock);
 	if (shadow) {
 		mapping->nrexceptional += nr;
 		/*
@@ -151,6 +152,7 @@ static void page_cache_delete(struct address_space *mapping,
 		smp_wmb();
 	}
 	mapping->nrpages -= nr;
+	spin_unlock(&mapping->nr_lock);
 }
 
 static void unaccount_page_cache_page(struct address_space *mapping,
@@ -237,6 +239,7 @@ void __delete_from_page_cache(struct page *page, void *shadow)
 	unaccount_page_cache_page(mapping, page);
 	page_cache_delete(mapping, page, shadow);
 }
+EXPORT_SYMBOL(__delete_from_page_cache);
 
 static void page_cache_free_page(struct address_space *mapping,
 				struct page *page)
@@ -904,9 +907,11 @@ noinline int __add_to_page_cache_locked(struct page *page,
 		if (xas_error(&xas))
 			goto unlock;
 
+		spin_lock(&mapping->nr_lock);
 		if (old)
 			mapping->nrexceptional--;
 		mapping->nrpages++;
+		spin_unlock(&mapping->nr_lock);
 
 		/* hugetlb pages do not participate in page cache accounting */
 		if (!huge)
