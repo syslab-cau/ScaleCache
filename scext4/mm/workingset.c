@@ -412,11 +412,6 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 	struct address_space *mapping;
 	int ret;
 
-	if (lf_xa_get_node(node) == LF_XAS_RESTART) {
-		ret = LRU_RETRY;
-		goto out;
-	}
-
 	/*
 	 * Page cache insertions and deletions synchroneously maintain
 	 * the shadow node LRU under the i_pages lock and the
@@ -432,7 +427,8 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 	mapping = container_of(node->array, struct address_space, i_pages);
 
 	/* Coming from the list, invert the lock order */
-	if (!xa_trylock(&mapping->i_pages)) {
+	if (!xa_trylock(&mapping->i_pages) || 
+			(node = lf_xa_get_node(node)) == LF_XAS_RESTART) {
 		spin_unlock_irq(lru_lock);
 		ret = LRU_RETRY;
 		goto out;
@@ -453,7 +449,7 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 	if (WARN_ON_ONCE(node->count != node->nr_values))
 		goto out_invalid;
 	spin_lock(&mapping->nr_lock);
-	mapping->nrexceptional -= node->nr_values;
+	mapping->nrexceptional -= __sync_fetch_and_add(&node->nr_values, 0);
 	spin_unlock(&mapping->nr_lock);
 	//xas.xa_node = xa_parent_locked(&mapping->i_pages, node);
 	lf_xas_set_xa_node(&xas, xa_parent_locked(&mapping->i_pages, node));
@@ -468,10 +464,10 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 	__inc_lruvec_slab_state(node, WORKINGSET_NODERECLAIM);
 
 out_invalid:
+	lf_xa_put_node(node);
 	xa_unlock_irq(&mapping->i_pages);
 	ret = LRU_REMOVED_RETRY;
 out:
-	lf_xa_put_node(node);
 	lf_xas_clear_xa_node(&xas);
 	cond_resched();
 	spin_lock_irq(lru_lock);

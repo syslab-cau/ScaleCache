@@ -393,6 +393,8 @@ static inline void lf_xa_init(struct xarray *xa)
 	lf_xa_init_flags(xa, 0);
 }
 
+static inline void *lf_xa_head(const struct xarray *xa);
+
 /**
  * lf_xa_empty() - Determine if an array has any present entries.
  * @xa: XArray.
@@ -402,7 +404,7 @@ static inline void lf_xa_init(struct xarray *xa)
  */
 static inline bool lf_xa_empty(const struct xarray *xa)
 {
-	return xa->xa_head == NULL;
+	return lf_xa_head(xa) == NULL;
 }
 
 /**
@@ -524,7 +526,7 @@ void *__lf_xa_cmpxchg(struct xarray *, unsigned long index, void *old,
 		void *entry, gfp_t);
 int __must_check __lf_xa_insert(struct xarray *, unsigned long index,
 		void *entry, gfp_t);
-int __must_check __k_lf_xa_alloc(struct xarray *, u32 *id, void *entry,
+int __must_check __lf_xa_alloc(struct xarray *, u32 *id, void *entry,
 		struct lf_xa_limit, gfp_t);
 int __must_check __lf_xa_alloc_cyclic(struct xarray *, u32 *id, void *entry,
 		struct lf_xa_limit, u32 *next, gfp_t);
@@ -822,7 +824,7 @@ static inline __must_check int lf_xa_alloc(struct xarray *xa, u32 *id,
 	int err;
 
 	xa_lock(xa);
-	err = __k_lf_xa_alloc(xa, id, entry, limit, gfp);
+	err = __lf_xa_alloc(xa, id, entry, limit, gfp);
 	lf_xa_unlock(xa);
 
 	return err;
@@ -851,7 +853,7 @@ static inline int __must_check lf_xa_alloc_bh(struct xarray *xa, u32 *id,
 	int err;
 
 	xa_lock_bh(xa);
-	err = __k_lf_xa_alloc(xa, id, entry, limit, gfp);
+	err = __lf_xa_alloc(xa, id, entry, limit, gfp);
 	lf_xa_unlock_bh(xa);
 
 	return err;
@@ -880,7 +882,7 @@ static inline int __must_check lf_xa_alloc_irq(struct xarray *xa, u32 *id,
 	int err;
 
 	xa_lock_irq(xa);
-	err = __k_lf_xa_alloc(xa, id, entry, limit, gfp);
+	err = __lf_xa_alloc(xa, id, entry, limit, gfp);
 	lf_xa_unlock_irq(xa);
 
 	return err;
@@ -1136,15 +1138,17 @@ void lf_xa_garbage_collector(struct xarray *xa);
 /* Private */
 static inline void *lf_xa_head(const struct xarray *xa)
 {
-	return rcu_dereference_check(xa->xa_head,
-						lockdep_is_held(&xa->xa_lock));
+	//return rcu_dereference_check(xa->xa_head,
+	//					lockdep_is_held(&xa->xa_lock));
+	return __atomic_load_n(&xa->xa_head, __ATOMIC_SEQ_CST);
 }
 
 /* Private */
 static inline void *lf_xa_head_locked(const struct xarray *xa)
 {
-	return rcu_dereference_protected(xa->xa_head,
-						lockdep_is_held(&xa->xa_lock));
+	//return rcu_dereference_protected(xa->xa_head,
+	//					lockdep_is_held(&xa->xa_lock));
+	return __atomic_load_n(&xa->xa_head, __ATOMIC_SEQ_CST);
 }
 
 /* Private */
@@ -1152,8 +1156,9 @@ static inline void *lf_xa_entry(const struct xarray *xa,
 				const struct xa_node *node, unsigned int offset)
 {
 	LF_XA_NODE_BUG_ON(node, offset >= LF_XA_CHUNK_SIZE);
-	return rcu_dereference_check(node->slots[offset],
-						lockdep_is_held(&xa->xa_lock));
+	//return rcu_dereference_check(node->slots[offset],
+	//					lockdep_is_held(&xa->xa_lock));
+	return __atomic_load_n(&node->slots[offset], __ATOMIC_SEQ_CST);
 }
 
 /* Private */
@@ -1161,45 +1166,27 @@ static inline void *lf_xa_entry_locked(const struct xarray *xa,
 				const struct xa_node *node, unsigned int offset)
 {
 	LF_XA_NODE_BUG_ON(node, offset >= LF_XA_CHUNK_SIZE);
-	return rcu_dereference_protected(node->slots[offset],
-						lockdep_is_held(&xa->xa_lock));
+	//return rcu_dereference_protected(node->slots[offset],
+	//					lockdep_is_held(&xa->xa_lock));
+	return __atomic_load_n(&node->slots[offset], __ATOMIC_SEQ_CST);
 }
 
 /* Private */
 static inline struct xa_node *lf_xa_parent(const struct xarray *xa,
 					const struct xa_node *node)
 {
-	struct xa_node *parent;
-	parent = rcu_dereference_check(node->parent,
-						lockdep_is_held(&xa->xa_lock));
-	//if (parent)
-	// do we need parent->gc_flag check here??
-	//	__sync_fetch_and_add(&parent->refcnt, 1);
-	return parent;
+	//return rcu_dereference_check(node->parent,
+	//					lockdep_is_held(&xa->xa_lock));
+	return __atomic_load_n(&node->parent, __ATOMIC_SEQ_CST);
 }
 
 /* Private */
 static inline struct xa_node *lf_xa_parent_locked(const struct xarray *xa,
 					const struct xa_node *node)
 {
-	struct xa_node *parent;
-	parent = rcu_dereference_protected(node->parent,
-						lockdep_is_held(&xa->xa_lock));
-	//if (parent)
-	// do we need parent->gc_flag check here??
-	//	__sync_fetch_and_add(&parent->refcnt, 1);
-	return parent;
-}
-
-/* Private */
-static inline struct xa_node *lf_xa_parent_raw(const struct xa_node *node)
-{
-	struct xa_node *parent;
-	parent = rcu_dereference_raw(node->parent);
-	//if (parent)
-	// do we need parent->gc_flag check here??
-	//	__sync_fetch_and_add(&parent->refcnt, 1);
-	return parent;
+	//return rcu_dereference_protected(node->parent,
+	//					lockdep_is_held(&xa->xa_lock));
+	return __atomic_load_n(&node->parent, __ATOMIC_SEQ_CST);
 }
 
 /* Private */
@@ -1391,11 +1378,14 @@ static inline bool lf_xas_not_node(struct xa_node *node);
 static inline struct xa_node *lf_xa_get_node(struct xa_node *node)
 {
 	if (lf_xas_not_node(node))
+		//return LF_XAS_RESTART;
 		return node;
 
 	//if (node->refcnt > 100) {
 	//	LF_XA_NODE_BUG_ON(node, 1);
 	//}
+	if (__sync_fetch_and_add(&node->gc_flag, 0))
+		return LF_XAS_RESTART;
 	__sync_fetch_and_add(&node->refcnt, 1);
 	if (__sync_fetch_and_add(&node->gc_flag, 0)) {
 		lf_xa_put_node(node);
@@ -1468,7 +1458,8 @@ static inline bool lf_xas_is_node(const struct xa_state *xas)
 /* True if the pointer is something other than a node */
 static inline bool lf_xas_not_node(struct xa_node *node)
 {
-	return ((unsigned long)node & 3) || !node || node->gc_flag;
+	//return ((unsigned long)node & 3) || !node || node->gc_flag;
+	return ((unsigned long)node & 3) || !node;
 }
 
 #if 1
@@ -1488,11 +1479,14 @@ static inline void lf_xas_set_xa_node(struct xa_state *xas, struct xa_node *node
 }
 #endif
 
+static inline void lf_xas_reset(struct xa_state *xas);
+
 /* Decreases old xa_node refcnt */
 static inline void lf_xas_clear_xa_node(struct xa_state *xas)
 {
-	if (lf_xas_is_node(xas))
-		lf_xa_put_node(xas->xa_node);
+	//if (lf_xas_is_node(xas))
+	//	lf_xa_put_node(xas->xa_node);
+	lf_xas_reset(xas);
 }
 
 /* True if the node represents RESTART or an error */
@@ -1603,7 +1597,7 @@ static inline void *lf_xas_reload(struct xa_state *xas)
 
 	if (node)
 		return lf_xa_entry(xas->xa, node, xas->xa_offset);
-	return xa_head(xas->xa);
+	return lf_xa_head(xas->xa);
 }
 
 /**

@@ -43,6 +43,9 @@ static inline void __clear_shadow_entry(struct address_space *mapping,
 		lf_xas_clear_xa_node(&xas);
 		return;
 	}
+
+	LF_XA_NODE_BUG_ON(xas.xa_node, __sync_fetch_and_add(&xas.xa_node->refcnt, 0) == 64);
+
 	lf_xas_store(&xas, NULL);
 	lf_xas_clear_xa_node(&xas);
 	spin_lock(&mapping->nr_lock);
@@ -90,7 +93,7 @@ static void truncate_exceptional_pvec_entries(struct address_space *mapping,
 		struct page *page = pvec->pages[i];
 		pgoff_t index = indices[i];
 
-		if (!xa_is_value(page)) {
+		if (!lf_xa_is_value(page)) {
 			pvec->pages[j++] = page;
 			continue;
 		}
@@ -376,7 +379,7 @@ void scext4_truncate_inode_pages_range(struct address_space *mapping,
 			if (index >= end)
 				break;
 
-			if (xa_is_value(page))
+			if (lf_xa_is_value(page))
 				continue;
 
 			if (!trylock_page(page))

@@ -35,6 +35,8 @@
 #include "acl.h"
 
 ssize_t __scext4_generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from);
+ssize_t
+scext4_generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter);
 
 #ifdef CONFIG_FS_DAX
 static ssize_t scext4_dax_read_iter(struct kiocb *iocb, struct iov_iter *to)
@@ -77,7 +79,7 @@ static ssize_t scext4_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	if (IS_DAX(file_inode(iocb->ki_filp)))
 		return scext4_dax_read_iter(iocb, to);
 #endif
-	return generic_file_read_iter(iocb, to);
+	return scext4_generic_file_read_iter(iocb, to);
 }
 
 /*
@@ -365,9 +367,12 @@ static const struct vm_operations_struct scext4_dax_vm_ops = {
 #define scext4_dax_vm_ops	scext4_file_vm_ops
 #endif
 
+void scext4_filemap_map_pages(struct vm_fault *vmf,
+		pgoff_t start_pgoff, pgoff_t end_pgoff);
+
 static const struct vm_operations_struct scext4_file_vm_ops = {
 	.fault		= scext4_filemap_fault,
-	.map_pages	= filemap_map_pages,
+	.map_pages	= scext4_filemap_map_pages,
 	.page_mkwrite   = scext4_page_mkwrite,
 };
 

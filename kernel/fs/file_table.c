@@ -308,10 +308,10 @@ static void delayed_fput(struct work_struct *unused)
 	llist_for_each_entry_safe(f, t, node, f_u.fu_llist) {
 		__fput(f);
 
-		if (f->f_op->page_gc) {
-			page_cache = &f->f_inode->i_mapping->i_pages;
-			f->f_op->page_gc(page_cache);
-		}
+		//if (f->f_op->page_gc) {
+		//	page_cache = &f->f_inode->i_mapping->i_pages;
+		//	f->f_op->page_gc(page_cache);
+		//}
 	}
 }
 

@@ -2737,6 +2737,9 @@ out:
 	return err;
 }
 
+void scext4_tag_pages_for_writeback(struct address_space *mapping,
+			     pgoff_t start, pgoff_t end);
+
 static int scext4_writepages(struct address_space *mapping,
 			   struct writeback_control *wbc)
 {
@@ -2837,7 +2840,7 @@ static int scext4_writepages(struct address_space *mapping,
 	scext4_io_submit_init(&mpd.io_submit, wbc);
 retry:
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
-		tag_pages_for_writeback(mapping, mpd.first_page, mpd.last_page);
+		scext4_tag_pages_for_writeback(mapping, mpd.first_page, mpd.last_page);
 	done = false;
 	blk_start_plug(&plug);
 

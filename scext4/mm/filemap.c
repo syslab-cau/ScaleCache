@@ -140,7 +140,7 @@ static void page_cache_delete(struct address_space *mapping,
 	VM_BUG_ON_PAGE(nr != 1 && shadow, page);
 
 	lf_xas_store(&xas, shadow);
-	xas_init_marks(&xas);
+	lf_xas_init_marks(&xas);
 	
 	lf_xas_clear_xa_node(&xas);
 
@@ -514,6 +514,7 @@ bool scext4_filemap_range_has_page(struct address_space *mapping,
 		break;
 	}
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(&xas);
 
 	return page != NULL;
 }
@@ -956,6 +957,7 @@ noinline int __scext4_add_to_page_cache_locked_optimized(struct page *page,
 		if (lf_xas_error(&xas))
 			goto unlock;
 
+		lf_xas_clear_xa_node(&xas);
 		//smp_mb();
 
 		spin_lock(&mapping->nr_lock);
@@ -1026,7 +1028,7 @@ int scext4_add_to_page_cache_lru(struct page *page, struct address_space *mappin
 }
 
 #ifdef CONFIG_NUMA
-static struct page *__scext4_page_cache_alloc(gfp_t gfp)
+struct page *__scext4_page_cache_alloc(gfp_t gfp)
 {
 	int n;
 	struct page *page;
@@ -1536,7 +1538,7 @@ struct page *scext4_find_get_entry(struct address_space *mapping, pgoff_t offset
 	LF_XA_STATE(xas, &mapping->i_pages, offset);
 	struct page *page;
 
-	rcu_read_lock();
+	//rcu_read_lock();
 repeat:
 	lf_xas_reset(&xas);
 	page = lf_xas_load(&xas);
@@ -1563,7 +1565,7 @@ repeat:
 	}
 	page = find_subpage(page, offset);
 out:
-	rcu_read_unlock();
+	//rcu_read_unlock();
 	
 	lf_xas_clear_xa_node(&xas);
 
@@ -1592,7 +1594,7 @@ struct page *scext4_find_lock_entry(struct address_space *mapping, pgoff_t offse
 	struct page *page;
 
 repeat:
-	page = find_get_entry(mapping, offset);
+	page = scext4_find_get_entry(mapping, offset);
 	if (page && !xa_is_value(page)) {
 		lock_page(page);
 		/* Has the page been truncated? */
@@ -1644,7 +1646,7 @@ struct page *scext4_pagecache_get_page(struct address_space *mapping, pgoff_t of
 
 repeat:
 	page = scext4_find_get_entry(mapping, offset);
-	if (xa_is_value(page))
+	if (lf_xa_is_value(page))
 		page = NULL;
 	if (!page)
 		goto no_page;
@@ -1741,7 +1743,7 @@ unsigned scext4_find_get_entries(struct address_space *mapping,
 	if (!nr_entries)
 		return 0;
 
-	rcu_read_lock();
+	//rcu_read_lock();
 	lf_xas_for_each(&xas, page, ULONG_MAX) {
 		if (lf_xas_retry(&xas, page))
 			continue;
@@ -1772,7 +1774,7 @@ put_page:
 retry:
 		lf_xas_reset(&xas);
 	}
-	rcu_read_unlock();
+	//rcu_read_unlock();
 	lf_xas_clear_xa_node(&xas);
 	return ret;
 }
@@ -1809,7 +1811,7 @@ unsigned scext4_find_get_pages_range(struct address_space *mapping, pgoff_t *sta
 	if (unlikely(!nr_pages))
 		return 0;
 
-	rcu_read_lock();
+	//rcu_read_lock();
 	lf_xas_for_each(&xas, page, end) {
 		if (lf_xas_retry(&xas, page))
 			continue;
@@ -1847,7 +1849,7 @@ retry:
 	else
 		*start = end + 1;
 out:
-	rcu_read_unlock();
+	//rcu_read_unlock();
 	lf_xas_clear_xa_node(&xas);
 
 	return ret;
@@ -2004,6 +2006,112 @@ static void shrink_readahead_size_eio(struct file *filp,
 	ra->ra_pages /= 4;
 }
 
+
+
+/**
+ * find_get_page - find and get a page reference
+ * @mapping: the address_space to search
+ * @offset: the page index
+ *
+ * Looks up the page cache slot at @mapping & @offset.  If there is a
+ * page cache page, it is returned with an increased refcount.
+ *
+ * Otherwise, %NULL is returned.
+ */
+static inline struct page *scext4_find_get_page(struct address_space *mapping,
+					pgoff_t offset)
+{
+	return scext4_pagecache_get_page(mapping, offset, 0, 0);
+}
+
+static inline struct page *scext4_find_get_page_flags(struct address_space *mapping,
+					pgoff_t offset, int fgp_flags)
+{
+	return scext4_pagecache_get_page(mapping, offset, fgp_flags, 0);
+}
+
+/**
+ * find_lock_page - locate, pin and lock a pagecache page
+ * @mapping: the address_space to search
+ * @offset: the page index
+ *
+ * Looks up the page cache slot at @mapping & @offset.  If there is a
+ * page cache page, it is returned locked and with an increased
+ * refcount.
+ *
+ * Otherwise, %NULL is returned.
+ *
+ * find_lock_page() may sleep.
+ */
+static inline struct page *scext4_find_lock_page(struct address_space *mapping,
+					pgoff_t offset)
+{
+	return scext4_pagecache_get_page(mapping, offset, FGP_LOCK, 0);
+}
+
+/**
+ * find_or_create_page - locate or add a pagecache page
+ * @mapping: the page's address_space
+ * @index: the page's index into the mapping
+ * @gfp_mask: page allocation mode
+ *
+ * Looks up the page cache slot at @mapping & @offset.  If there is a
+ * page cache page, it is returned locked and with an increased
+ * refcount.
+ *
+ * If the page is not present, a new page is allocated using @gfp_mask
+ * and added to the page cache and the VM's LRU list.  The page is
+ * returned locked and with an increased refcount.
+ *
+ * On memory exhaustion, %NULL is returned.
+ *
+ * find_or_create_page() may sleep, even if @gfp_flags specifies an
+ * atomic allocation!
+ */
+static inline struct page *scext4_find_or_create_page(struct address_space *mapping,
+					pgoff_t offset, gfp_t gfp_mask)
+{
+	return scext4_pagecache_get_page(mapping, offset,
+					FGP_LOCK|FGP_ACCESSED|FGP_CREAT,
+					gfp_mask);
+}
+
+/**
+ * grab_cache_page_nowait - returns locked page at given index in given cache
+ * @mapping: target address_space
+ * @index: the page index
+ *
+ * Same as grab_cache_page(), but do not wait if the page is unavailable.
+ * This is intended for speculative data generators, where the data can
+ * be regenerated if the page couldn't be grabbed.  This routine should
+ * be safe to call while holding the lock for another page.
+ *
+ * Clear __GFP_FS when allocating the page to avoid recursion into the fs
+ * and deadlock against the caller's locked page.
+ */
+static inline struct page *scext4_grab_cache_page_nowait(struct address_space *mapping,
+				pgoff_t index)
+{
+	return scext4_pagecache_get_page(mapping, index,
+			FGP_LOCK|FGP_CREAT|FGP_NOFS|FGP_NOWAIT,
+			mapping_gfp_mask(mapping));
+}
+
+static inline struct page *scext4_page_cache_alloc(struct address_space *x)
+{
+	return __scext4_page_cache_alloc(mapping_gfp_mask(x));
+}
+
+void scext4_page_cache_sync_readahead(struct address_space *mapping,
+				struct file_ra_state *ra, struct file *filp,
+				pgoff_t offset, unsigned long req_size);
+
+void
+scext4_page_cache_async_readahead(struct address_space *mapping,
+			   struct file_ra_state *ra, struct file *filp,
+			   struct page *page, pgoff_t offset,
+			   unsigned long req_size);
+
 /**
  * generic_file_buffered_read - generic file read routine
  * @iocb:	the iocb to read
@@ -2058,19 +2166,19 @@ find_page:
 			goto out;
 		}
 
-		page = find_get_page(mapping, index);
+		page = scext4_find_get_page(mapping, index);
 		if (!page) {
 			if (iocb->ki_flags & IOCB_NOWAIT)
 				goto would_block;
-			page_cache_sync_readahead(mapping,
+			scext4_page_cache_sync_readahead(mapping,
 					ra, filp,
 					index, last_index - index);
-			page = find_get_page(mapping, index);
+			page = scext4_find_get_page(mapping, index);
 			if (unlikely(page == NULL))
 				goto no_cached_page;
 		}
 		if (PageReadahead(page)) {
-			page_cache_async_readahead(mapping,
+			scext4_page_cache_async_readahead(mapping,
 					ra, filp, page,
 					index, last_index - index);
 		}
@@ -2243,12 +2351,12 @@ no_cached_page:
 		 * Ok, it wasn't cached, so we need to create a new
 		 * page..
 		 */
-		page = page_cache_alloc(mapping);
+		page = scext4_page_cache_alloc(mapping);
 		if (!page) {
 			error = -ENOMEM;
 			goto out;
 		}
-		error = add_to_page_cache_lru(page, mapping, index,
+		error = scext4_add_to_page_cache_lru(page, mapping, index,
 				mapping_gfp_constraint(mapping, GFP_KERNEL));
 		if (error) {
 			put_page(page);
@@ -2301,7 +2409,7 @@ scext4_generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 
 		size = i_size_read(inode);
 		if (iocb->ki_flags & IOCB_NOWAIT) {
-			if (filemap_range_has_page(mapping, iocb->ki_pos,
+			if (scext4_filemap_range_has_page(mapping, iocb->ki_pos,
 						   iocb->ki_pos + count - 1))
 				return -EAGAIN;
 		} else {

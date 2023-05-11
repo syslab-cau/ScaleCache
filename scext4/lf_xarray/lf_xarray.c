@@ -195,7 +195,7 @@ static void *lf_xas_start(struct xa_state *xas)
 	if (lf_xas_error(xas))
 		return NULL;
 
-	entry = xa_head(xas->xa);
+	entry = lf_xa_head(xas->xa);
 	if (!lf_xa_is_node(entry)) {
 		if (xas->xa_index)
 			return set_bounds(xas);
@@ -260,13 +260,26 @@ void *lf_xas_load(struct xa_state *xas)
 		node = lf_xa_get_node(lf_xa_to_node(entry));
 
 		if (node == LF_XAS_RESTART) {	// undergoing gc...
-			lf_xas_set_xa_node(xas, node);
+			//if (!lf_xa_parent(xas->xa, xas->xa_node))
+			//	return NULL;
+			//lf_xa_dump_node(xas->xa_node);
+			
+			
+			// if the node is undergoing gc, give up and retry from root node.
+			
+			
+			//lf_xas_reset(xas);
+			//entry = lf_xas_start(xas);
+			//continue;
+
+			//lf_xas_set_xa_node(xas, node);
 			return NULL;
 		}
 		if (xas->xa_shift > node->shift) {
 			lf_xa_put_node(node);
 			break;
 		}
+descend:
 		entry = lf_xas_descend(xas, node);
 		// it is okay to put node here, since xas->xa_node got refcnt in xas_descend()
 		lf_xa_put_node(node);
@@ -481,8 +494,7 @@ static void lf_xas_shrink(struct xa_state *xas)
 		LF_XA_NODE_BUG_ON(node, node->count > LF_XA_CHUNK_SIZE);
 		if (node->count != 1)
 			break;
-		//entry = lf_xa_entry_locked(xa, node, 0);
-		entry = lf_xa_entry(xa, node, 0);
+		entry = lf_xa_entry_locked(xa, node, 0);
 		if (!entry)
 			break;
 		if (!lf_xa_is_node(entry) && node->shift)
@@ -534,7 +546,7 @@ static void lf_xas_delete_node(struct xa_state *xas)
 		unsigned char count;
 		unsigned short refcnt = 0;
 
-		if (!node->parent)	// Check if node is root node
+		if (!lf_xa_parent(xas->xa, node))	// Check if node is root node
 			break;
 
 		LF_XA_NODE_BUG_ON(node, node->count > LF_XA_CHUNK_SIZE);
@@ -559,14 +571,16 @@ static void lf_xas_delete_node(struct xa_state *xas)
 		do {
 			if (count = __sync_fetch_and_add(&node->count, 0)) {	// Check if entry count is not zero.
 				printk("node->count: %u, Giving up to delete node.\n", count);
-				lf_xas_set_xa_node(xas, node);	// to put refcnt of xas->xa_node
+				__sync_lock_test_and_set(&node->gc_flag, 0);
+				lf_xas_set_xa_node(xas, node);	// to restore xas->xa_node
 				return;
 			}
 			if (!--gg_count) {
-				printk("[@%px] current refcnt: %hu count: %u, Waiting for other referencing threads...\n", node, refcnt, count);
+				printk("[pid %d] [@%px] current refcnt: %hu count: %u shift: %d, parent: @%px, Waiting for other referencing threads...\n", current->pid, node, refcnt, count, node->shift, node->parent);
 				//printk("Node deletion GG!\n");
-				LF_XA_NODE_BUG_ON(node, 1);
+				//LF_XA_NODE_BUG_ON(node, 1);
 				//return;
+				gg_count = 65535;
 			}
 		} while ((refcnt = __sync_fetch_and_add(&node->refcnt, 0)) > 0);
 
@@ -576,10 +590,10 @@ static void lf_xas_delete_node(struct xa_state *xas)
 		lf_xas_set_xa_node(xas, parent);
 		xas->xa_offset = node->offset;
 		printk("deleting node... parent @%px\n", parent);
-		//xa_node_free(node);
+		xa_node_free(node);
 
 		if (!parent) {
-			//xas->xa->xa_head = NULL;
+			xas->xa->xa_head = NULL;
 			//xas->xa_node = LF_XAS_BOUNDS;
 			lf_xas_set_xa_node(xas, LF_XAS_BOUNDS);
 			return;
@@ -613,19 +627,30 @@ static void lf_xas_delete_node(struct xa_state *xas)
 static void lf_xas_free_nodes(struct xa_state *xas, struct xa_node *top)
 {
 	unsigned int offset = 0;
-	struct xa_node *node = top;
+	struct xa_node *node = lf_xa_get_node(top);
+	
+	if (node == LF_XAS_RESTART)
+		return;
+
+	//printk("%s\n", __func__);
 
 	for (;;) {
 		void *entry = lf_xa_entry_locked(xas->xa, node, offset);
 
 		if (node->shift && lf_xa_is_node(entry)) {
+			struct xa_node *child;
 			// descend to left most slot until we reach leaf node
-			node = lf_xa_to_node(entry);
+			child = lf_xa_get_node(lf_xa_to_node(entry));
+			if (child == LF_XAS_RESTART) 
+				goto next;
+			lf_xa_put_node(node);
+			node = child;
 			offset = 0;
 			continue;
 		}
 		if (entry) 	// replace with RETRY entry
 			RCU_INIT_POINTER(node->slots[offset], LF_XA_RETRY_ENTRY);
+next:
 		offset++;	// replace every slots in this node 1with RETRY entry
 		while (offset == LF_XA_CHUNK_SIZE) {
 			struct xa_node *parent;
@@ -635,10 +660,11 @@ static void lf_xas_free_nodes(struct xa_state *xas, struct xa_node *top)
 			node->count = 0;
 			node->nr_values = 0;
 			lf_xas_update(xas, node);
+			lf_xa_put_node(node);
 			xa_node_free(node);
 			if (node == top)
 				return;
-			node = parent;
+			node = lf_xa_get_node(parent);
 		}
 	}
 }
@@ -680,9 +706,10 @@ static int lf_xas_expand(struct xa_state *xas, void *head)
 
 		LF_XA_NODE_BUG_ON(node, shift > BITS_PER_LONG);
 		node = lf_xas_alloc(xas, shift); // alloc new node
-		if (!node)
+		if (!node) {
+			lf_xa_put_node(lf_xa_to_node(head));
 			return -ENOMEM;
-
+		}
 		node->count = 1;
 		if (lf_xa_is_value(head))
 			node->nr_values = 1;
@@ -714,7 +741,7 @@ static int lf_xas_expand(struct xa_state *xas, void *head)
 			oldroot->offset = 0;
 			//rcu_assign_pointer(lf_xa_to_node(head)->parent, node); 
 			// Perform CAS
-			struct xa_node *tmp_node = lf_xa_parent_raw(oldroot);
+			struct xa_node *tmp_node = lf_xa_parent(xas->xa, oldroot);
 			if (tmp_node != NULL || !__sync_bool_compare_and_swap(
 				    &oldroot->parent, tmp_node, node)) {
 				struct xa_node *parent = __sync_fetch_and_add(
@@ -732,7 +759,7 @@ static int lf_xas_expand(struct xa_state *xas, void *head)
 		//rcu_assign_pointer(xa->xa_head, head);
 		if (!__sync_bool_compare_and_swap(&xa->xa_head, tmp_head, head)) {
 			xa_node_free(node);
-			head = __sync_fetch_and_add(&xa->xa_head, 0);
+			head = lf_xa_head(xas->xa);
 			goto ascend;
 		}
 		lf_xas_update(xas, node);
@@ -773,8 +800,7 @@ static void *lf_xas_create(struct xa_state *xas, bool allow_root)
 	unsigned int order = xas->xa_shift;
 
 	if (lf_xas_top(node)) { 
-		//entry = xa_head_locked(xa); 
-		entry = __sync_fetch_and_add(&xa->xa_head, 0); 
+		entry = lf_xa_head_locked(xa); 
 		//xas->xa_node = NULL;
 		lf_xas_set_xa_node(xas, NULL);
 		if (!entry && lf_xa_zero_busy(xa))
@@ -784,8 +810,8 @@ static void *lf_xas_create(struct xa_state *xas, bool allow_root)
 			return NULL;
 		if (!shift && !allow_root)
 			shift = LF_XA_CHUNK_SHIFT;
-		entry = xa_head_locked(xa);
-		slot = &xa->xa_head;
+		entry = lf_xa_head_locked(xa);
+		slot = &xas->xa->xa_head;
 	} else if (lf_xas_error(xas)) {
 		return NULL;
 	} else if (node) {
@@ -796,8 +822,8 @@ static void *lf_xas_create(struct xa_state *xas, bool allow_root)
 		slot = &node->slots[offset];
 	} else {
 		shift = 0;
-		entry = xa_head_locked(xa);
-		slot = &xa->xa_head;
+		entry = lf_xa_head_locked(xa);
+		slot = &xas->xa->xa_head;
 	}
 
 	while (shift > order) {
@@ -898,15 +924,19 @@ success:
 static void update_node(struct xa_state *xas, struct xa_node *node,
 		int count, int values)
 {
+	int node_count, nr_values;
+
 	if (!node || (!count && !values))
 		return;
 
 	// node->count += count;
 	// node->nr_values += values;
-	__sync_fetch_and_add(&node->count, count);
-	__sync_fetch_and_add(&node->nr_values, values);
-	LF_XA_NODE_BUG_ON(node, node->count > LF_XA_CHUNK_SIZE);
-	LF_XA_NODE_BUG_ON(node, node->nr_values > LF_XA_CHUNK_SIZE);
+	node_count = __sync_add_and_fetch(&node->count, count);
+	nr_values = __sync_add_and_fetch(&node->nr_values, values);
+	LF_XA_NODE_BUG_ON(node, (node_count > LF_XA_CHUNK_SIZE) &&
+				(node_count < (U8_MAX - LF_XA_CHUNK_SIZE)));
+	LF_XA_NODE_BUG_ON(node, (nr_values > LF_XA_CHUNK_SIZE) && 
+				(nr_values < (U8_MAX - LF_XA_CHUNK_SIZE)));
 	lf_xas_update(xas, node);
 	if (count < 0)
 		lf_xas_delete_node(xas);
@@ -941,13 +971,13 @@ static void update_node(struct xa_state *xas, struct xa_node *node,
 void *lf_xas_store(struct xa_state *xas, void *entry)
 {
 	struct xa_node *node;
-	void __rcu **slot = &xas->xa->xa_head;
+	void __rcu **slot = &xas->xa->xa_head;	// slot pointer
 	unsigned int offset, max;
 	int count = 0;
 	int values = 0;
-	void *first, *next;
+	void *first, *next;			// slot iterator
 	bool value = lf_xa_is_value(entry);
-	void *temp = xas->xa->xa_head;
+	void *temp = lf_xa_head(xas->xa);
 
 	if (entry) {
 		// entry is not node and not error -> then the new node could be root
@@ -1006,17 +1036,16 @@ void *lf_xas_store(struct xa_state *xas, void *entry)
 			break;
 		count += !next - !entry;
 		values += !lf_xa_is_value(first) - !value;
-		if (entry) {
-			if (offset == max)
+		if (entry) {	// insert
+			if (offset == max)		// single index entry
 				break;
-			if (!lf_xa_is_sibling(entry))
+			if (!lf_xa_is_sibling(entry))	// multi index entry
 				entry = lf_xa_mk_sibling(xas->xa_offset);
-		} else {
+		} else {	// delete
 			if (offset == LF_XA_CHUNK_MASK)
 				break;
 		}
-		//next = lf_xa_entry_locked(xas->xa, node, ++offset);
-		next = __sync_fetch_and_add(&node->slots[++offset], 0);
+		next = lf_xa_entry_locked(xas->xa, node, ++offset);
 		if (!lf_xa_is_sibling(next)) {
 			if (!entry && (offset > max))
 				break;
@@ -1283,7 +1312,7 @@ void lf_xas_split(struct xa_state *xas, void *entry, unsigned int order)
 		}
 	} while (offset-- > xas->xa_offset);
 
-	node->nr_values += values;
+	__sync_fetch_and_add(&node->nr_values, values);
 }
 //EXPORT_SYMBOL_GPL(lf_xas_split);
 #endif
@@ -1515,7 +1544,7 @@ void *lf_xas_find_marked(struct xa_state *xas, unsigned long max, lf_xa_mark_t m
 		goto out;
 	} else if (lf_xas_top(xas->xa_node)) {
 		advance = false;
-		entry = xa_head(xas->xa);
+		entry = lf_xa_head(xas->xa);
 		//xas->xa_node = NULL;
 		lf_xas_set_xa_node(xas, NULL);
 		if (xas->xa_index > max_index(entry))
@@ -1610,6 +1639,12 @@ void *lf_xas_find_conflict(struct xa_state *xas)
 			return NULL;
 		while (lf_xa_is_node(curr)) {
 			struct xa_node *node = lf_xa_get_node(lf_xa_to_node(curr));
+			if (node == LF_XAS_RESTART) {
+				return NULL;
+				//lf_xas_reset(xas);
+				//curr = lf_xas_start(xas);
+				//continue;	
+			}
 			//struct xa_node *node = lf_xa_to_node(curr);
 			curr = lf_xas_descend(xas, node);
 			lf_xa_put_node(node);
@@ -1640,8 +1675,7 @@ void *lf_xas_find_conflict(struct xa_state *xas)
 			//xas->xa_node = lf_xa_to_node(curr);
 			lf_xas_set_xa_node(xas, lf_xa_to_node(curr));
 			xas->xa_offset = 0;
-			//curr = lf_xa_entry_locked(xas->xa, xas->xa_node, 0);
-			curr = lf_xa_entry(xas->xa, xas->xa_node, 0);
+			curr = lf_xa_entry_locked(xas->xa, xas->xa_node, 0);
 		}
 		if (curr)
 			return curr;
@@ -1685,7 +1719,7 @@ void lf_xa_garbage_collect_entry(struct xarray *xa, void *entry, unsigned long i
 			for (i = 0; i < LF_XA_CHUNK_SIZE; i++){
 				lf_xa_garbage_collect_entry(xa, node->slots[i],
 				      index + (i << node->shift), node->shift, flag);
-				if (!xa->xa_head)
+				if (!lf_xa_head(xa))
 					return;
 			}
 		}
@@ -1754,6 +1788,7 @@ void *lf_xa_load(struct xarray *xa, unsigned long index)
 			entry = NULL;
 	} while (lf_xas_retry(&xas, entry));
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(&xas);
 	return entry;
 }
 //EXPORT_SYMBOL(lf_xa_load);
@@ -1781,8 +1816,12 @@ static void *lf_xas_result(struct xa_state *xas, void *curr)
  */
 void *__lf_xa_erase(struct xarray *xa, unsigned long index)
 {
-	XA_STATE(xas, xa, index);
-	return lf_xas_result(&xas, lf_xas_store(&xas, NULL));
+	void *result;
+	
+	LF_XA_STATE(xas, xa, index);
+	result = lf_xas_result(&xas, lf_xas_store(&xas, NULL));
+	lf_xas_clear_xa_node(&xas);
+	return result;
 }
 //EXPORT_SYMBOL(__lf_xa_erase);
 
@@ -1827,8 +1866,8 @@ void *lf_xa_erase(struct xarray *xa, unsigned long index)
  */
 void *__lf_xa_store(struct xarray *xa, unsigned long index, void *entry, gfp_t gfp)
 {
-	XA_STATE(xas, xa, index);
-	void *curr;
+	LF_XA_STATE(xas, xa, index);
+	void *curr, *result;
 
 	if (WARN_ON_ONCE(lf_xa_is_advanced(entry)))
 		return LF_XA_ERROR(-EINVAL);
@@ -1841,7 +1880,9 @@ void *__lf_xa_store(struct xarray *xa, unsigned long index, void *entry, gfp_t g
 			lf_xas_clear_mark(&xas, LF_XA_FREE_MARK);
 	} while (__lf_xas_nomem(&xas, gfp)); 
 
-	return lf_xas_result(&xas, curr);
+	result = lf_xas_result(&xas, curr);
+	lf_xas_clear_xa_node(&xas);
+	return result;
 }
 //EXPORT_SYMBOL(__lf_xa_store);
 
@@ -1893,7 +1934,7 @@ void *lf_xa_store(struct xarray *xa, unsigned long index, void *entry, gfp_t gfp
 void *__lf_xa_cmpxchg(struct xarray *xa, unsigned long index,
 			void *old, void *entry, gfp_t gfp)
 {
-	XA_STATE(xas, xa, index);
+	LF_XA_STATE(xas, xa, index);
 	void *curr;
 
 	if (WARN_ON_ONCE(lf_xa_is_advanced(entry)))
@@ -1930,8 +1971,9 @@ void *__lf_xa_cmpxchg(struct xarray *xa, unsigned long index,
  */
 int __lf_xa_insert(struct xarray *xa, unsigned long index, void *entry, gfp_t gfp)
 {
-	XA_STATE(xas, xa, index);
+	LF_XA_STATE(xas, xa, index);
 	void *curr;
+	int result;
 
 	if (WARN_ON_ONCE(lf_xa_is_advanced(entry)))
 		return -EINVAL;
@@ -1949,7 +1991,9 @@ int __lf_xa_insert(struct xarray *xa, unsigned long index, void *entry, gfp_t gf
 		}
 	} while (__lf_xas_nomem(&xas, gfp));
 	
-	return lf_xas_error(&xas);
+	result = lf_xas_error(&xas);
+	lf_xas_clear_xa_node(&xas);
+	return result;
 }
 //EXPORT_SYMBOL(__lf_xa_insert);
 
@@ -2006,7 +2050,8 @@ static void lf_xas_set_range(struct xa_state *xas, unsigned long first,
 void *lf_xa_store_range(struct xarray *xa, unsigned long first,
 		unsigned long last, void *entry, gfp_t gfp)
 {
-	XA_STATE(xas, xa, 0);
+	void *result;
+	LF_XA_STATE(xas, xa, 0);
 
 	if (WARN_ON_ONCE(lf_xa_is_internal(entry)))
 		return LF_XA_ERROR(-EINVAL);
@@ -2035,7 +2080,9 @@ unlock:
 		lf_xas_unlock(&xas);
 	} while (lf_xas_nomem(&xas, gfp));
 
-	return lf_xas_result(&xas, NULL);
+	result = lf_xas_result(&xas, NULL);
+	lf_xas_clear_xa_node(&xas);
+	return result;
 }
 //EXPORT_SYMBOL(lf_xa_store_range);
 
@@ -2048,7 +2095,7 @@ unlock:
  */
 int lf_xa_get_order(struct xarray *xa, unsigned long index)
 {
-	XA_STATE(xas, xa, index);
+	LF_XA_STATE(xas, xa, index);
 	void *entry;
 	int order = 0;
 
@@ -2074,6 +2121,7 @@ int lf_xa_get_order(struct xarray *xa, unsigned long index)
 	order += xas.xa_node->shift;
 unlock:
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(&xas);
 
 	return order;
 }
@@ -2081,7 +2129,7 @@ unlock:
 #endif /* CONFIG_XARRAY_MULTI */
 
 /**
- * __k_lf_xa_alloc() - Find somewhere to store this entry in the XArray.
+ * __lf_xa_alloc() - Find somewhere to store this entry in the XArray.
  * @xa: XArray.
  * @id: Pointer to ID.
  * @limit: Range for allocated ID.
@@ -2097,10 +2145,11 @@ unlock:
  * Return: 0 on success, -ENOMEM if memory could not be allocated or
  * -EBUSY if there are no free entries in @limit.
  */
-int __k_lf_xa_alloc(struct xarray *xa, u32 *id, void *entry,
+int __lf_xa_alloc(struct xarray *xa, u32 *id, void *entry,
 		struct lf_xa_limit limit, gfp_t gfp)
 {
-	XA_STATE(xas, xa, 0);
+	int result;
+	LF_XA_STATE(xas, xa, 0);
 
 	if (WARN_ON_ONCE(lf_xa_is_advanced(entry)))
 		return -EINVAL;
@@ -2121,7 +2170,9 @@ int __k_lf_xa_alloc(struct xarray *xa, u32 *id, void *entry,
 		lf_xas_clear_mark(&xas, LF_XA_FREE_MARK);
 	} while (__lf_xas_nomem(&xas, gfp));
 
-	return lf_xas_error(&xas);
+	result = lf_xas_error(&xas);
+	lf_xas_clear_xa_node(&xas);
+	return result;
 }
 //EXPORT_SYMBOL(__xa_alloc);
 
@@ -2153,7 +2204,7 @@ int __lf_xa_alloc_cyclic(struct xarray *xa, u32 *id, void *entry,
 	int ret;
 
 	limit.min = max(min, *next);
-	ret = __k_lf_xa_alloc(xa, id, entry, limit, gfp);
+	ret = __lf_xa_alloc(xa, id, entry, limit, gfp);
 	if ((xa->xa_flags & LF_XA_FLAGS_ALLOC_WRAPPED) && ret == 0) {
 		xa->xa_flags &= ~LF_XA_FLAGS_ALLOC_WRAPPED;
 		ret = 1;
@@ -2161,7 +2212,7 @@ int __lf_xa_alloc_cyclic(struct xarray *xa, u32 *id, void *entry,
 
 	if (ret < 0 && limit.min > min) {
 		limit.min = min;
-		ret = __k_lf_xa_alloc(xa, id, entry, limit, gfp);
+		ret = __lf_xa_alloc(xa, id, entry, limit, gfp);
 		if (ret == 0)
 			ret = 1;
 	}
@@ -2187,11 +2238,12 @@ int __lf_xa_alloc_cyclic(struct xarray *xa, u32 *id, void *entry,
  */
 void __lf_xa_set_mark(struct xarray *xa, unsigned long index, lf_xa_mark_t mark)
 {
-	XA_STATE(xas, xa, index);
+	LF_XA_STATE(xas, xa, index);
 	void *entry = lf_xas_load(&xas);
 
 	if (entry)
 		lf_xas_set_mark(&xas, mark);
+	lf_xas_clear_xa_node(&xas);
 }
 //EXPORT_SYMBOL(__lf_xa_set_mark);
 
@@ -2205,11 +2257,12 @@ void __lf_xa_set_mark(struct xarray *xa, unsigned long index, lf_xa_mark_t mark)
  */
 void __lf_xa_clear_mark(struct xarray *xa, unsigned long index, lf_xa_mark_t mark)
 {
-	XA_STATE(xas, xa, index);
+	LF_XA_STATE(xas, xa, index);
 	void *entry = lf_xas_load(&xas);
 
 	if (entry)
 		lf_xas_clear_mark(&xas, mark);
+	lf_xas_clear_xa_node(&xas);
 }
 //EXPORT_SYMBOL(__lf_xa_clear_mark);
 
@@ -2227,7 +2280,7 @@ void __lf_xa_clear_mark(struct xarray *xa, unsigned long index, lf_xa_mark_t mar
  */
 bool lf_xa_get_mark(struct xarray *xa, unsigned long index, lf_xa_mark_t mark)
 {
-	XA_STATE(xas, xa, index);
+	LF_XA_STATE(xas, xa, index);
 	void *entry;
 
 	rcu_read_lock();
@@ -2238,9 +2291,11 @@ bool lf_xa_get_mark(struct xarray *xa, unsigned long index, lf_xa_mark_t mark)
 		entry = lf_xas_descend(&xas, lf_xa_to_node(entry));
 	}
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(&xas);
 	return false;
  found:
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(&xas);
 	return true;
 }
 //EXPORT_SYMBOL(lf_xa_get_mark);
@@ -2301,7 +2356,7 @@ void lf_xa_clear_mark(struct xarray *xa, unsigned long index, lf_xa_mark_t mark)
 void *lf_xa_find(struct xarray *xa, unsigned long *indexp,
 			unsigned long max, lf_xa_mark_t filter)
 {
-	XA_STATE(xas, xa, *indexp);
+	LF_XA_STATE(xas, xa, *indexp);
 	void *entry;
 
 	rcu_read_lock();
@@ -2315,6 +2370,7 @@ void *lf_xa_find(struct xarray *xa, unsigned long *indexp,
 
 	if (entry)
 		*indexp = xas.xa_index;
+	lf_xas_clear_xa_node(&xas);
 	return entry;
 }
 //EXPORT_SYMBOL(lf_xa_find);
@@ -2358,7 +2414,7 @@ void lf_xa_garbage_collect_node(const struct xa_node *node){
 void *lf_xa_find_after(struct xarray *xa, unsigned long *indexp,
 			unsigned long max, lf_xa_mark_t filter)
 {
-	XA_STATE(xas, xa, *indexp + 1);
+	LF_XA_STATE(xas, xa, *indexp + 1);
 	void *entry;
 
 	if (xas.xa_index == 0)
@@ -2382,6 +2438,7 @@ void *lf_xa_find_after(struct xarray *xa, unsigned long *indexp,
 
 	if (entry)
 		*indexp = xas.xa_index;
+	lf_xas_clear_xa_node(&xas);
 	return entry;
 }
 //EXPORT_SYMBOL(lf_xa_find_after);
@@ -2401,6 +2458,7 @@ static unsigned int lf_xas_extract_present(struct xa_state *xas, void **dst,
 			break;
 	}
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(xas);
 
 	return i;
 }
@@ -2420,6 +2478,7 @@ static unsigned int lf_xas_extract_marked(struct xa_state *xas, void **dst,
 			break;
 	}
 	rcu_read_unlock();
+	lf_xas_clear_xa_node(xas);
 
 	return i;
 }
@@ -2455,7 +2514,7 @@ static unsigned int lf_xas_extract_marked(struct xa_state *xas, void **dst,
 unsigned int lf_xa_extract(struct xarray *xa, void **dst, unsigned long start,
 			unsigned long max, unsigned int n, lf_xa_mark_t filter)
 {
-	XA_STATE(xas, xa, start);
+	LF_XA_STATE(xas, xa, start);
 
 	if (!n)
 		return 0;
@@ -2478,13 +2537,13 @@ unsigned int lf_xa_extract(struct xarray *xa, void **dst, unsigned long start,
  */
 void lf_xa_destroy(struct xarray *xa)
 {
-	XA_STATE(xas, xa, 0);
+	LF_XA_STATE(xas, xa, 0);
 	unsigned long flags;
 	void *entry;
 
 	xas.xa_node = NULL;
 	lf_xas_lock_irqsave(&xas, flags);
-	entry = xa_head_locked(xa);
+	entry = lf_xa_head_locked(xa);
 	RCU_INIT_POINTER(xa->xa_head, NULL);
 	lf_xas_init_marks(&xas);
 	if (lf_xa_zero_busy(xa))
@@ -2493,6 +2552,7 @@ void lf_xa_destroy(struct xarray *xa)
 	if (lf_xa_is_node(entry))
 		lf_xas_free_nodes(&xas, lf_xa_to_node(entry));
 	lf_xas_unlock_irqrestore(&xas, flags);
+	lf_xas_clear_xa_node(&xas);
 }
 //EXPORT_SYMBOL(lf_xa_destroy);
 
@@ -2568,7 +2628,7 @@ void lf_xa_dump_entry(const void *entry, unsigned long index, unsigned long shif
 
 void lf_xa_dump(const struct xarray *xa)
 {
-	void *entry = xa->xa_head;
+	void *entry = lf_xa_head(xa);
 	unsigned int shift = 0;
 
 	pr_info("xarray: %px head %px flags %x marks %d %d %d\n", xa, entry,
