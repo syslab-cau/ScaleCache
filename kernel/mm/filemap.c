@@ -1622,6 +1622,10 @@ repeat:
 }
 EXPORT_SYMBOL(find_lock_entry);
 
+struct page *(*pagecache_get_page_in_scext4)(struct address_space *mapping, pgoff_t offset,
+	int fgp_flags, gfp_t gfp_mask) = NULL;
+EXPORT_SYMBOL(pagecache_get_page_in_scext4);
+
 /**
  * pagecache_get_page - find and get a page reference
  * @mapping: the address_space to search
@@ -1656,6 +1660,11 @@ struct page *pagecache_get_page(struct address_space *mapping, pgoff_t offset,
 	int fgp_flags, gfp_t gfp_mask)
 {
 	struct page *page;
+
+	if (mapping->a_ops->custom_pagecache_get_page)
+		return mapping->a_ops->custom_pagecache_get_page(mapping, offset, fgp_flags, gfp_mask);
+	if (mapping->i_pages.is_custom && pagecache_get_page_in_scext4)
+		return pagecache_get_page_in_scext4(mapping, offset, fgp_flags, gfp_mask);
 
 repeat:
 	page = find_get_entry(mapping, offset);
@@ -1754,6 +1763,9 @@ unsigned find_get_entries(struct address_space *mapping,
 	XA_STATE(xas, &mapping->i_pages, start);
 	struct page *page;
 	unsigned int ret = 0;
+
+	if (mapping->a_ops->custom_find_get_entries)
+		return mapping->a_ops->custom_find_get_entries(mapping, start, nr_entries, entries, indices);
 
 	if (!nr_entries)
 		return 0;

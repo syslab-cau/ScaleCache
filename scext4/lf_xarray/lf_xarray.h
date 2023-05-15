@@ -36,6 +36,7 @@
  * 0-62: Sibling entries
  * 256: Zero entry
  * 257: Retry entry
+ * 258: GC node entry
  *
  * Errors are also represented as internal entries, but use the negative
  * space (-4094 to -2).  They're never stored in the slots array; only
@@ -136,6 +137,8 @@ static inline unsigned int lf_xa_pointer_tag(void *entry)
  * Internal entries are used for a number of purposes.  Entries 0-255 are
  * used for sibling entries (only 0-62 are used by the current code).  256
  * is used for the retry entry.  257 is used for the reserved / zero entry.
+ * 258 is used for indicating previously stored node in slot is undergoing
+ * delete phase by another thread.
  * Negative internal entries are used to represent errnos.  Node pointers
  * are also tagged as internal entries in some situations.
  *
@@ -302,6 +305,7 @@ struct lf_xarray {
 	.xa_lock = __SPIN_LOCK_UNLOCKED(name.xa_lock),		\
 	.xa_flags = flags,					\
 	.xa_head = NULL,					\
+	.is_custom = true,					\
 }
 
 /**
@@ -378,6 +382,7 @@ static inline void lf_xa_init_flags(struct xarray *xa, gfp_t flags)
 	spin_lock_init(&xa->xa_lock);
 	xa->xa_flags = flags;
 	xa->xa_head = NULL;
+	xa->is_custom = true;
 }
 
 /**
@@ -1227,11 +1232,12 @@ static inline unsigned long lf_xa_to_sibling(const void *entry)
  */
 static inline bool lf_xa_is_sibling(const void *entry)
 {
-	return IS_ENABLED(CONFIG_LF_XARRAY_MULTI) && lf_xa_is_internal(entry) &&
+	return IS_ENABLED(CONFIG_XARRAY_MULTI) && lf_xa_is_internal(entry) &&
 		(entry < lf_xa_mk_sibling(LF_XA_CHUNK_SIZE - 1));
 }
 
 #define LF_XA_RETRY_ENTRY		lf_xa_mk_internal(256)
+#define LF_XA_NODE_GC_ENTRY		lf_xa_mk_internal(258)
 
 /**
  * lf_xa_is_retry() - Is the entry a retry entry?
@@ -1242,6 +1248,17 @@ static inline bool lf_xa_is_sibling(const void *entry)
 static inline bool lf_xa_is_retry(const void *entry)
 {
 	return unlikely(entry == LF_XA_RETRY_ENTRY);
+}
+
+/**
+ * lf_xa_node_is_gc() - Is this entry previously a node to be deleted?
+ * @entry: Entry retriedved from the lf-XArray
+ *
+ * Return: %true if the entry is previously a node to be deleted?
+ */
+static inline bool lf_xa_node_is_gc(const void *entry)
+{
+	return unlikely(entry == LF_XA_NODE_GC_ENTRY);
 }
 
 /**
@@ -1384,8 +1401,11 @@ static inline struct xa_node *lf_xa_get_node(struct xa_node *node)
 	//if (node->refcnt > 100) {
 	//	LF_XA_NODE_BUG_ON(node, 1);
 	//}
-	if (__sync_fetch_and_add(&node->gc_flag, 0))
-		return LF_XAS_RESTART;
+	
+	//if (__sync_fetch_and_add(&node->gc_flag, 0))
+	//	return LF_XAS_RESTART;
+	// since parent slot is set to be LF_XA_RETRY_ENTRY, it is okay to increase this refcnt if thread already have node pointer
+	
 	__sync_fetch_and_add(&node->refcnt, 1);
 	if (__sync_fetch_and_add(&node->gc_flag, 0)) {
 		lf_xa_put_node(node);
@@ -1468,9 +1488,15 @@ static inline void lf_xas_set_xa_node(struct xa_state *xas, struct xa_node *node
 {
 	struct xa_node *old = xas->xa_node;
 
+	if (old == node)
+		return;
+
+	if (!lf_xas_not_node(node))
+		__sync_fetch_and_add(&node->refcnt, 1);
+
 	if (lf_xas_is_node(xas))
 		lf_xa_put_node(old);
-	xas->xa_node = lf_xa_get_node(node);
+	xas->xa_node = node;
 }
 #else
 static inline void lf_xas_set_xa_node(struct xa_state *xas, struct xa_node *node)
@@ -1625,7 +1651,7 @@ static inline void lf_xas_set(struct xa_state *xas, unsigned long index)
 static inline void lf_xas_set_order(struct xa_state *xas, unsigned long index,
 					unsigned int order)
 {
-#ifdef CONFIG_LF_XARRAY_MULTI
+#ifdef CONFIG_XARRAY_MULTI
 	xas->xa_index = order < BITS_PER_LONG ? (index >> order) << order : 0;
 	xas->xa_shift = order - (order % LF_XA_CHUNK_SHIFT);
 	xas->xa_sibs = (1 << (order % LF_XA_CHUNK_SHIFT)) - 1;

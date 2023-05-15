@@ -59,6 +59,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/scext4.h>
 
+#include "lf_xarray/lf_xarray.h"
+
 static struct scext4_lazy_init *scext4_li_info;
 static struct mutex scext4_li_mtx;
 static struct ratelimit_state scext4_mount_msg_ratelimit;
@@ -115,32 +117,32 @@ static struct inode *scext4_get_journal_inode(struct super_block *sb,
  * transaction start -> page lock(s) -> i_data_sem (rw)
  */
 
-#if !defined(CONFIG_SCEXT2_FS) && !defined(CONFIG_SCEXT2_FS_MODULE) && defined(CONFIG_SCEXT4_USE_FOR_SCEXT2)
-static struct file_system_type pxt2_fs_type = {
+#if !defined(CONFIG_EXT2_FS) && !defined(CONFIG_EXT2_FS_MODULE) && defined(CONFIG_EXT4_USE_FOR_EXT2)
+static struct file_system_type scext2_fs_type = {
 	.owner		= THIS_MODULE,
-	.name		= "pxt2",
+	.name		= "scext2",
 	.mount		= scext4_mount,
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
-MODULE_ALIAS_FS("pxt2");
-MODULE_ALIAS("pxt2");
-#define IS_SCEXT2_SB(sb) ((sb)->s_bdev->bd_holder == &pxt2_fs_type)
+MODULE_ALIAS_FS("scext2");
+MODULE_ALIAS("scepxt2");
+#define IS_SCEXT2_SB(sb) ((sb)->s_bdev->bd_holder == &scext2_fs_type)
 #else
 #define IS_SCEXT2_SB(sb) (0)
 #endif
 
 
-static struct file_system_type ext3_fs_type = {
+static struct file_system_type scext3_fs_type = {
 	.owner		= THIS_MODULE,
-	.name		= "ext3",
+	.name		= "scext3",
 	.mount		= scext4_mount,
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
-MODULE_ALIAS_FS("ext3");
-MODULE_ALIAS("ext3");
-#define IS_EXT3_SB(sb) ((sb)->s_bdev->bd_holder == &ext3_fs_type)
+MODULE_ALIAS_FS("scext3");
+MODULE_ALIAS("scext3");
+#define IS_SCEXT3_SB(sb) ((sb)->s_bdev->bd_holder == &scext3_fs_type)
 
 /*
  * This works like sb_bread() except it uses ERR_PTR for error
@@ -1144,6 +1146,33 @@ static void scext4_destroy_inode(struct inode *inode)
 	}
 }
 
+static void __address_space_init_once(struct address_space *mapping)
+{
+	lf_xa_init_flags(&mapping->i_pages, XA_FLAGS_LOCK_IRQ | XA_FLAGS_ACCOUNT);
+	init_rwsem(&mapping->i_mmap_rwsem);
+	INIT_LIST_HEAD(&mapping->private_list);
+	spin_lock_init(&mapping->private_lock);
+	spin_lock_init(&mapping->nr_lock);
+	mapping->i_mmap = RB_ROOT_CACHED;
+}
+
+/*
+ * These are initializations that only need to be done
+ * once, because the fields are idempotent across use
+ * of the inode, so let the slab aware of that.
+ */
+void scext4_inode_init_once(struct inode *inode)
+{
+	memset(inode, 0, sizeof(*inode));
+	INIT_HLIST_NODE(&inode->i_hash);
+	INIT_LIST_HEAD(&inode->i_devices);
+	INIT_LIST_HEAD(&inode->i_io_list);
+	INIT_LIST_HEAD(&inode->i_wb_list);
+	INIT_LIST_HEAD(&inode->i_lru);
+	__address_space_init_once(&inode->i_data);
+	i_size_ordered_init(inode);
+}
+
 static void init_once(void *foo)
 {
 	struct scext4_inode_info *ei = (struct scext4_inode_info *) foo;
@@ -1152,7 +1181,7 @@ static void init_once(void *foo)
 	init_rwsem(&ei->xattr_sem);
 	init_rwsem(&ei->i_data_sem);
 	init_rwsem(&ei->i_mmap_sem);
-	inode_init_once(&ei->vfs_inode);
+	scext4_inode_init_once(&ei->vfs_inode);
 }
 
 static int __init init_inodecache(void)
@@ -1860,7 +1889,7 @@ static int handle_mount_opt(struct super_block *sb, char *opt, int token,
 			 "Mount option \"%s\" incompatible with pxt2", opt);
 		return -1;
 	}
-	if ((m->flags & MOPT_NO_EXT3) && IS_EXT3_SB(sb)) {
+	if ((m->flags & MOPT_NO_EXT3) && IS_SCEXT3_SB(sb)) {
 		scext4_msg(sb, KERN_ERR,
 			 "Mount option \"%s\" incompatible with ext3", opt);
 		return -1;
@@ -3790,7 +3819,7 @@ static int scext4_fill_super(struct super_block *sb, void *data, int silent)
 	 * enable delayed allocation by default
 	 * Use -o nodelalloc to turn it off
 	 */
-	if (!IS_EXT3_SB(sb) && !IS_SCEXT2_SB(sb) &&
+	if (!IS_SCEXT3_SB(sb) && !IS_SCEXT2_SB(sb) &&
 	    ((def_mount_opts & SCEXT4_DEFM_NODELALLOC) == 0))
 		set_opt(sb, DELALLOC);
 
@@ -4005,7 +4034,7 @@ static int scext4_fill_super(struct super_block *sb, void *data, int silent)
 		}
 	}
 
-	if (IS_EXT3_SB(sb)) {
+	if (IS_SCEXT3_SB(sb)) {
 		if (ext3_feature_set_ok(sb))
 			scext4_msg(sb, KERN_INFO, "mounting ext3 file system "
 				 "using the scext4 subsystem");
@@ -6191,7 +6220,7 @@ static inline int pxt2_feature_set_ok(struct super_block *sb) { return 0; }
 
 static inline void register_as_ext3(void)
 {
-	int err = register_filesystem(&ext3_fs_type);
+	int err = register_filesystem(&scext3_fs_type);
 	if (err)
 		printk(KERN_WARNING
 		       "SCEXT4-fs: Unable to register as ext3 (%d)\n", err);
@@ -6199,7 +6228,7 @@ static inline void register_as_ext3(void)
 
 static inline void unregister_as_ext3(void)
 {
-	unregister_filesystem(&ext3_fs_type);
+	unregister_filesystem(&scext3_fs_type);
 }
 
 static inline int ext3_feature_set_ok(struct super_block *sb)
@@ -6231,6 +6260,11 @@ wait_queue_head_t scext4__ioend_wq[SCEXT4_WQ_HASH_SZ];
 extern void (*wb_workfn_in_scext4)(struct work_struct *work);
 extern void scext4_wb_workfn(struct work_struct *work);
 //
+
+extern struct page *(*pagecache_get_page_in_scext4)(struct address_space *mapping, pgoff_t offset,
+	int fgp_flags, gfp_t gfp_mask);
+extern struct page *scext4_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
+	int fgp_flags, gfp_t gfp_mask);
 
 static int __init scext4_init_fs(void)
 {
@@ -6283,7 +6317,8 @@ static int __init scext4_init_fs(void)
 		goto out;
 
  	/* assign wb_workfn */
- 	//wb_workfn_in_scext4 = &scext4_wb_workfn;
+ 	wb_workfn_in_scext4 = &scext4_wb_workfn;
+	pagecache_get_page_in_scext4 = &scext4_pagecache_get_page;
 
 	return 0;
 out:
@@ -6324,6 +6359,7 @@ static void __exit scext4_exit_fs(void)
 	scext4_exit_pending();
 
 	wb_workfn_in_scext4 = NULL;
+	pagecache_get_page_in_scext4 = NULL;
 }
 
 module_init(scext4_init_fs)

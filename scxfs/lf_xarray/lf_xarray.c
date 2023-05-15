@@ -174,7 +174,8 @@ static void lf_xas_advance(struct xa_state *xas)
 
 static void *set_bounds(struct xa_state *xas)
 {
-	xas->xa_node = LF_XAS_BOUNDS;
+	//xas->xa_node = LF_XAS_BOUNDS;
+	lf_xas_set_xa_node(xas, LF_XAS_BOUNDS);
 	return NULL;
 }
 
@@ -203,7 +204,8 @@ static void *lf_xas_start(struct xa_state *xas)
 			return set_bounds(xas);
 	}
 
-	xas->xa_node = NULL;
+	//xas->xa_node = NULL;
+	lf_xas_set_xa_node(xas, NULL);
 	return entry;
 }
 

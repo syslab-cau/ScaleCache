@@ -389,6 +389,8 @@ static void *xas_alloc(struct xa_state *xas, unsigned int shift)
 	node->shift = shift;
 	node->count = 0;
 	node->nr_values = 0;
+	node->refcnt = 1;
+	node->gc_flag = 0;
 	RCU_INIT_POINTER(node->parent, xas->xa_node);
 	node->array = xas->xa;
 
@@ -1018,6 +1020,8 @@ void xas_split_alloc(struct xa_state *xas, void *entry, unsigned int order,
 		if (!node)
 			goto nomem;
 		node->array = xas->xa;
+		node->refcnt = 0;
+		node->gc_flag = 0;
 		for (i = 0; i < XA_CHUNK_SIZE; i++) {
 			if ((i & mask) == 0) {
 				RCU_INIT_POINTER(node->slots[i], entry);
@@ -1072,6 +1076,8 @@ void xas_split(struct xa_state *xas, void *entry, unsigned int order)
 			child->count = XA_CHUNK_SIZE;
 			child->nr_values = xa_is_value(entry) ?
 					XA_CHUNK_SIZE : 0;
+			child->refcnt = 0;
+			child->gc_flag = 0;
 			RCU_INIT_POINTER(child->parent, node);
 			node_set_marks(node, offset, child, marks);
 			rcu_assign_pointer(node->slots[offset],

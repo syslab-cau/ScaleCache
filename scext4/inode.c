@@ -3970,6 +3970,13 @@ static int scext4_set_page_dirty(struct page *page)
 
 int scext4_generic_error_remove_page(struct address_space *mapping, struct page *page);
 
+struct page *scext4_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
+	int fgp_flags, gfp_t gfp_mask);
+
+unsigned scext4_find_get_entries(struct address_space *mapping,
+			  pgoff_t start, unsigned int nr_entries,
+			  struct page **entries, pgoff_t *indices);
+
 static const struct address_space_operations scext4_aops = {
 	.readpage		= scext4_readpage,
 	.readpages		= scext4_readpages,
@@ -3985,6 +3992,8 @@ static const struct address_space_operations scext4_aops = {
 	.migratepage		= buffer_migrate_page,
 	.is_partially_uptodate  = block_is_partially_uptodate,
 	.error_remove_page	= scext4_generic_error_remove_page,
+	.custom_pagecache_get_page = scext4_pagecache_get_page,
+	.custom_find_get_entries = scext4_find_get_entries,
 };
 
 static const struct address_space_operations scext4_journalled_aops = {
@@ -4001,6 +4010,8 @@ static const struct address_space_operations scext4_journalled_aops = {
 	.direct_IO		= scext4_direct_IO,
 	.is_partially_uptodate  = block_is_partially_uptodate,
 	.error_remove_page	= scext4_generic_error_remove_page,
+	.custom_pagecache_get_page = scext4_pagecache_get_page,
+	.custom_find_get_entries = scext4_find_get_entries,
 };
 
 static const struct address_space_operations scext4_da_aops = {
@@ -4018,6 +4029,8 @@ static const struct address_space_operations scext4_da_aops = {
 	.migratepage		= buffer_migrate_page,
 	.is_partially_uptodate  = block_is_partially_uptodate,
 	.error_remove_page	= scext4_generic_error_remove_page,
+	.custom_pagecache_get_page = scext4_pagecache_get_page,
+	.custom_find_get_entries = scext4_find_get_entries,
 };
 
 static const struct address_space_operations scext4_dax_aops = {
@@ -4026,6 +4039,8 @@ static const struct address_space_operations scext4_dax_aops = {
 	.set_page_dirty		= noop_set_page_dirty,
 	.bmap			= scext4_bmap,
 	.invalidatepage		= noop_invalidatepage,
+	.custom_pagecache_get_page = scext4_pagecache_get_page,
+	.custom_find_get_entries = scext4_find_get_entries,
 };
 
 void scext4_set_aops(struct inode *inode)

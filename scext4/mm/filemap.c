@@ -3287,6 +3287,8 @@ struct page *scext4_grab_cache_page_write_begin(struct address_space *mapping,
 	if (flags & AOP_FLAG_NOFS)
 		fgp_flags |= FGP_NOFS;
 
+	mapping->i_pages.is_custom = true;
+
 	page = scext4_pagecache_get_page(mapping, index, fgp_flags,
 			mapping_gfp_mask(mapping));
 

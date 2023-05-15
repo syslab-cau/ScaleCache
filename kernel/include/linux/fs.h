@@ -407,6 +407,13 @@ struct address_space_operations {
 	int (*swap_activate)(struct swap_info_struct *sis, struct file *file,
 				sector_t *span);
 	void (*swap_deactivate)(struct file *file);
+	
+	struct page *(*custom_pagecache_get_page)(struct address_space *mapping,
+		       	pgoff_t offset, int fgp_flags, gfp_t gfp_mask);
+
+	unsigned (*custom_find_get_entries)(struct address_space *mapping,
+			  pgoff_t start, unsigned int nr_entries,
+			  struct page **entries, pgoff_t *indices);
 };
 
 extern const struct address_space_operations empty_aops;
