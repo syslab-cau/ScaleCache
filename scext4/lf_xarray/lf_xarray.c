@@ -221,8 +221,7 @@ static void *lf_xas_descend(struct xa_state *xas, struct xa_node *node)
 		entry = lf_xa_entry(xas->xa, node, offset);
 	}
 
-	if (xas->xa_node != node)
-		xas->xa_offset = offset;
+	xas->xa_offset = offset;
 	return entry;
 }
 
@@ -260,8 +259,12 @@ void *lf_xas_load(struct xa_state *xas)
 			LF_XA_NODE_BUG_ON(node, 1);
 		}
 		if (__sync_fetch_and_add(&node->gc_flag, 0)) {
-			entry = lf_xa_mk_node(node->parent);
-			printk("BING BING~~ 3\n");
+			//entry = lf_xa_mk_node(node->parent);
+			lf_xas_reset(xas);
+			entry = lf_xas_start(xas);
+			pr_cont("BING BING~~ 3 ");
+			lf_xa_dump_node(node);
+
 			continue;
 		}
 		node = lf_xa_get_node(lf_xa_to_node(entry));
@@ -275,10 +278,10 @@ void *lf_xas_load(struct xa_state *xas)
 			// if the node is undergoing gc, give up and retry from root node.
 			
 			
-			//lf_xas_reset(xas);
-			//entry = lf_xas_start(xas);
+			lf_xas_reset(xas);
+			entry = lf_xas_start(xas);
 			
-			entry = lf_xa_mk_node(xas->xa_node->parent);
+			//entry = lf_xa_mk_node(xas->xa_node->parent);
 			printk("BING BING~~ 1\n");
 			continue;
 
@@ -593,18 +596,14 @@ static void lf_xas_delete_node(struct xa_state *xas)
 		//xas->xa_node = parent;
 		lf_xas_set_xa_node(xas, parent);
 	
-		temp = parent->slots[xas->xa_offset];
-		while (!__sync_bool_compare_and_swap(&parent->slots[xas->xa_offset], temp, LF_XA_NODE_GC_ENTRY))
-			temp = parent->slots[xas->xa_offset];
+		__sync_lock_test_and_set(&parent->slots[xas->xa_offset], LF_XA_NODE_GC_ENTRY);
 		//__sync_lock_test_and_set(&parent->slots[xas->xa_offset], LF_XA_NODE_GC_ENTRY);
 		printk("node->count: %u\n", count);
 		do {
 			if (count = __sync_fetch_and_add(&node->count, 0)) {	// Check if entry count is not zero.
 				printk("node->count: %u, Giving up to delete node.\n", count);
 				__sync_lock_test_and_set(&node->gc_flag, 0);
-				temp = parent->slots[xas->xa_offset];
-				while (!__sync_bool_compare_and_swap(&parent->slots[xas->xa_offset], temp, node))
-					temp = parent->slots[xas->xa_offset];
+				__sync_lock_test_and_set(&parent->slots[xas->xa_offset], node);
 				lf_xas_set_xa_node(xas, node);	// to restore xas->xa_node
 				return;
 			}
@@ -894,6 +893,7 @@ static void *lf_xas_create(struct xa_state *xas, bool allow_root)
 			goto descend;
 		} else {	// node is leaf node and entry is pointer or value
 			//node = lf_xa_get_node(node);
+			printk(" node is leaf node and entry is pointer or value\n");
 			break;
 		}
 descend:
@@ -968,6 +968,8 @@ static void update_node(struct xa_state *xas, struct xa_node *node,
 	if (!node || (!count && !values))
 		return;
 
+	LF_XA_NODE_BUG_ON(node, count > 1 || count < -1);
+
 	// node->count += count;
 	// node->nr_values += values;
 	node_count = __sync_add_and_fetch(&node->count, count);
@@ -1017,6 +1019,7 @@ void *lf_xas_store(struct xa_state *xas, void *entry)
 	void *first, *next;			// slot iterator
 	bool value = lf_xa_is_value(entry);
 	void *temp = lf_xa_head(xas->xa);
+	int test=0;
 
 	if (entry) {
 		// entry is not node and not error -> then the new node could be root
@@ -1030,6 +1033,14 @@ void *lf_xas_store(struct xa_state *xas, void *entry)
 		printk("xas invalid! (%s:%d)\n", __func__, __LINE__);
 		return first;
 	}
+
+	if (!first && !lf_xa_is_value(first)) {		// first is page
+		if (!entry && !lf_xa_is_value(entry)) {	// entry is page
+			printk("Insert & Insert!");
+		
+		}
+	}
+
 	node = xas->xa_node;
 	if (node && (xas->xa_shift < node->shift))
 		xas->xa_sibs = 0;
@@ -1041,6 +1052,10 @@ void *lf_xas_store(struct xa_state *xas, void *entry)
 	max = xas->xa_offset + xas->xa_sibs;	// max number of leaves
 	if (node) {
 		slot = &node->slots[offset];	// get slot pointer
+		//if(__sync_fetch_and_add(slot, 0) != NULL){
+		//	test = 1;	
+		//}
+
 		if (xas->xa_sibs)
 			lf_xas_squash_marks(xas);
 	}
@@ -1048,6 +1063,7 @@ void *lf_xas_store(struct xa_state *xas, void *entry)
 		lf_xas_init_marks(xas);
 
 	for (;;) {
+		void *curr;
 		/*
 		 * Must clear the marks before setting the entry to NULL,
 		 * otherwise lf_xas_for_each_marked may find a NULL entry and
@@ -1057,11 +1073,32 @@ void *lf_xas_store(struct xa_state *xas, void *entry)
 		 */
 		if (node)
 			temp = node->slots[offset];
-			
+		
+	/*	
 		while (!__sync_bool_compare_and_swap(slot, temp, entry)) {
+			if(test == 1){
+				printk("%s, test: %d\n", __func__, test);	
+			}
+
 			if (node)
 				temp = node->slots[offset];
 		}
+*/
+		 
+		if ((curr = __sync_val_compare_and_swap(slot, next, entry)) != next) {
+			// entry: page
+			//if (!entry && !lf_xa_is_value(entry)) {	// page or NULL
+				printk("%s, test: %d\n", __func__, test);	
+				lf_xas_set_err(xas, -EEXIST);
+				return curr;
+			//}
+			// entry: shadow
+			
+			
+			// entry: NULL
+			//
+		}
+			
 
 		if (lf_xa_is_node(next) && (!node || node->shift)) { // coming from scan_shadow_nodes()
 			
@@ -1691,9 +1728,9 @@ void *lf_xas_find_conflict(struct xa_state *xas)
 			node = lf_xa_get_node(lf_xa_to_node(curr));
 			if (node == LF_XAS_RESTART) {
 				//return NULL;
-				//lf_xas_reset(xas);
-				//curr = lf_xas_start(xas);
-				curr = lf_xa_mk_node(xas->xa_node);
+				lf_xas_reset(xas);
+				curr = lf_xas_start(xas);
+				//curr = lf_xa_mk_node(xas->xa_node);
 				continue;	
 			}
 			curr = lf_xas_descend(xas, node);

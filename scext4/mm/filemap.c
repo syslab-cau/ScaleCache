@@ -932,9 +932,11 @@ noinline int __scext4_add_to_page_cache_locked_optimized(struct page *page,
 		preempt_disable();
 		//xas_lock_irq(&xas);
 
+		// this loop is intented for finding if page is already present in the leaf node by other thread or not!
 		lf_xas_for_each_conflict(&xas, entry) {
 			old = entry;
 			if (!lf_xa_is_value(entry)) {
+				printk("Insert & Insert (%s:%d)\n", __func__, __LINE__);
 				lf_xas_set_err(&xas, -EEXIST);
 				goto unlock;
 			}
@@ -946,18 +948,19 @@ noinline int __scext4_add_to_page_cache_locked_optimized(struct page *page,
 			/* entry may have been split before we acquired lock */
 			order = lf_xa_get_order(xas.xa, xas.xa_index);
 			if (order > thp_order(page)) {
+				printk("xas_split!! order: %u, thp_order: %u\n", order, thp_order(page));
 				lf_xas_split(&xas, old, order);
 				lf_xas_reset(&xas);
 			}
 		}
 
 		//xas_lock(&xas);
-		lf_xas_store(&xas, page);
+		void *old_entry = lf_xas_store(&xas, page);
 		smp_mb();
 		if (lf_xas_error(&xas))
 			goto unlock;
 
-		lf_xas_clear_xa_node(&xas);
+		//lf_xas_clear_xa_node(&xas);
 		//smp_mb();
 
 		spin_lock(&mapping->nr_lock);
