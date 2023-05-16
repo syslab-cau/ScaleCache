@@ -429,10 +429,10 @@ static bool __lf_xas_nomem(struct xa_state *xas, gfp_t gfp)
 
 static void lf_xas_update(struct xa_state *xas, struct xa_node *node)
 {
-	if (xas->xa_update)
-		xas->xa_update(node);
-	else
-		LF_XA_NODE_BUG_ON(node, !list_empty(&node->private_list));
+	//if (xas->xa_update)
+	//	xas->xa_update(node);
+	//else
+	//	LF_XA_NODE_BUG_ON(node, !list_empty(&node->private_list));
 }
 
 static void *lf_xas_alloc(struct xa_state *xas, unsigned int shift)

@@ -1683,7 +1683,7 @@ static inline void lf_xas_set_order(struct xa_state *xas, unsigned long index,
  */
 static inline void lf_xas_set_update(struct xa_state *xas, xa_update_node_t update)
 {
-	xas->xa_update = update;
+//	xas->xa_update = update;
 }
 
 /**
