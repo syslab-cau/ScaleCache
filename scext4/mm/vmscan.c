@@ -501,7 +501,8 @@ static int __remove_mapping(struct address_space *mapping, struct page *page,
 		    !mapping_exiting(mapping) && !dax_mapping(mapping))
 			shadow = workingset_eviction(page);
 		preempt_disable();
-		__scext4_delete_from_page_cache(page, shadow); 
+		//__scext4_delete_from_page_cache(page, shadow); 
+		__scext4_delete_from_page_cache(page, NULL); 
 		//__delete_from_page_cache(page, shadow); 
 		local_irq_restore(flags);
 		preempt_enable();

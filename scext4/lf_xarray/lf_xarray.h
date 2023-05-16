@@ -1414,6 +1414,16 @@ static inline struct xa_node *lf_xa_get_node(struct xa_node *node)
 	return node;
 }
 
+static inline void lock_node(struct xa_node *node)
+{
+//	while (!__sync_bool_compare_and_swap(&node->gc_lock, 0, 1));
+}
+
+static inline void unlock_node(struct xa_node *node)
+{
+//	__sync_lock_test_and_set(&node->gc_lock, 0);
+}
+
 /**
  * lf_xas_error() - Return an errno stored in the xa_state.
  * @xas: XArray operation state.
@@ -1482,7 +1492,7 @@ static inline bool lf_xas_not_node(struct xa_node *node)
 	return ((unsigned long)node & 3) || !node;
 }
 
-#if 1
+#if 0
 /* Set xas.xa_node and increase refcnt, after decreasing old xa_node refcnt */
 static inline void lf_xas_set_xa_node(struct xa_state *xas, struct xa_node *node)
 {

@@ -246,6 +246,8 @@ void *lf_xas_load(struct xa_state *xas)
 {
 	struct xa_node *parent = NULL;
 	void *entry = lf_xas_start(xas);
+	void **slot;
+	struct xa_node *node = NULL;
 
 	while (lf_xa_is_node(entry)) {
 		struct xa_node *node = lf_xa_to_node(entry);
@@ -264,10 +266,11 @@ void *lf_xas_load(struct xa_state *xas)
 			entry = lf_xas_start(xas);
 			pr_cont("BING BING~~ 3 ");
 			lf_xa_dump_node(node);
-
 			continue;
 		}
+		
 		node = lf_xa_get_node(lf_xa_to_node(entry));
+
 
 		if (node == LF_XAS_RESTART) {	// undergoing gc...
 			//if (!lf_xa_parent(xas->xa, xas->xa_node))
@@ -293,19 +296,27 @@ void *lf_xas_load(struct xa_state *xas)
 			break;
 		}
 descend:
+		if (lf_xas_is_node(xas))
+			unlock_node(xas->xa_node);
+		lock_node(node);
 		entry = lf_xas_descend(xas, node);
+		//parent_slot = &node->slots[xas->xa_offset];
 		// it is okay to put node here, since xas->xa_node got refcnt in xas_descend()
 		lf_xa_put_node(node);
 		if (node->shift == 0) {		// reached leaf node
 			LF_XA_NODE_BUG_ON(node, lf_xa_node_is_gc(entry));
 			break;
 		} else if (node->shift && lf_xa_node_is_gc(entry)) { // child node is undergoing gc...
-			entry = lf_xa_mk_node(node);
+			//entry = lf_xa_mk_node(node);
+			lf_xas_reset(xas);
+			entry = lf_xas_start(xas);
 			printk("BING BING~~ 2\n");
 			continue;
 		}
 	}
 	LF_XA_NODE_BUG_ON(xas->xa_node, lf_xa_node_is_gc(entry));
+	if (lf_xas_is_node(xas))
+		unlock_node(xas->xa_node);
 
 	return entry;
 }
@@ -462,6 +473,7 @@ static void *lf_xas_alloc(struct xa_state *xas, unsigned int shift)
 	node->nr_values = 0;
 	node->refcnt = 1;
 	node->gc_flag = 0;
+	node->gc_lock = 0;
 	RCU_INIT_POINTER(node->parent, xas->xa_node);
 	node->array = xas->xa;
 
@@ -577,9 +589,15 @@ static void lf_xas_delete_node(struct xa_state *xas)
 			break;
 		
 		// Return if gc_flag is already set. --> Someone else is already doing gc...
-		if (__sync_bool_compare_and_swap(&node->gc_flag, 0, 1))
+		if (!__sync_bool_compare_and_swap(&node->gc_flag, 0, 1))
 			break;
 		
+
+		//LF_XA_NODE_BUG_ON(node, node->shift);
+
+		parent = node->parent;
+		lock_node(parent);
+
 		/* 
 		 * At this point, 
 		 * 1) node is not root node.
@@ -598,6 +616,9 @@ static void lf_xas_delete_node(struct xa_state *xas)
 	
 		__sync_lock_test_and_set(&parent->slots[xas->xa_offset], LF_XA_NODE_GC_ENTRY);
 		//__sync_lock_test_and_set(&parent->slots[xas->xa_offset], LF_XA_NODE_GC_ENTRY);
+		//
+		unlock_node(parent);
+
 		printk("node->count: %u\n", count);
 		do {
 			if (count = __sync_fetch_and_add(&node->count, 0)) {	// Check if entry count is not zero.
@@ -654,10 +675,11 @@ static void lf_xas_delete_node(struct xa_state *xas)
 static void lf_xas_free_nodes(struct xa_state *xas, struct xa_node *top)
 {
 	unsigned int offset = 0;
-	struct xa_node *node = lf_xa_get_node(top);
+	struct xa_node *node = top;
+	//struct xa_node *node = lf_xa_get_node(top);
 	
-	if (node == LF_XAS_RESTART)
-		return;
+	//if (node == LF_XAS_RESTART)
+	//	return;
 
 	//printk("%s\n", __func__);
 
@@ -667,10 +689,11 @@ static void lf_xas_free_nodes(struct xa_state *xas, struct xa_node *top)
 		if (node->shift && lf_xa_is_node(entry)) {
 			struct xa_node *child;
 			// descend to left most slot until we reach leaf node
-			child = lf_xa_get_node(lf_xa_to_node(entry));
-			if (child == LF_XAS_RESTART) 
-				goto next;
-			lf_xa_put_node(node);
+			child = lf_xa_to_node(entry);
+			//child = lf_xa_get_node(lf_xa_to_node(entry));
+			//if (child == LF_XAS_RESTART) 
+			//	goto next;
+			//lf_xa_put_node(node);
 			node = child;
 			offset = 0;
 			continue;
@@ -687,11 +710,12 @@ next:
 			node->count = 0;
 			node->nr_values = 0;
 			lf_xas_update(xas, node);
-			lf_xa_put_node(node);
+			//lf_xa_put_node(node);
 			xa_node_free(node);
 			if (node == top)
 				return;
-			node = lf_xa_get_node(parent);
+			//node = lf_xa_get_node(parent);
+			node = parent;
 		}
 	}
 }
@@ -824,6 +848,7 @@ static void *lf_xas_create(struct xa_state *xas, bool allow_root)
 	struct xa_node *node = xas->xa_node;
 	int shift;
 	unsigned int order = xas->xa_shift;
+	struct xa_node *parent = NULL;
 
 	if (lf_xas_top(node)) { 
 		entry = lf_xa_head_locked(xa); 
@@ -859,7 +884,7 @@ static void *lf_xas_create(struct xa_state *xas, bool allow_root)
 		//if (!lf_xas_top(node)) {
 		//}
 		if (!entry) {
-			struct xa_node *parent = xas->xa_node;
+			//struct xa_node *parent = xas->xa_node;
 			node = lf_xas_alloc(xas, shift);
 			if (!node)
 				break;
@@ -897,11 +922,15 @@ static void *lf_xas_create(struct xa_state *xas, bool allow_root)
 			break;
 		}
 descend:
+		//if (parent)
+		//	unlock_node(parent);
+		//lock_node(node);
 		entry = lf_xas_descend(xas, node);
 		slot = &node->slots[xas->xa_offset];
 		//if (shift > order)
 		LF_XA_NODE_BUG_ON(node, !node);
 		lf_xa_put_node(node);
+		parent = node;
 	}
 
 	LF_XA_NODE_BUG_ON(node, shift);
@@ -1317,6 +1346,7 @@ void lf_xas_split_alloc(struct xa_state *xas, void *entry, unsigned int order,
 		node->array = xas->xa;
 		node->refcnt = 0;
 		node->gc_flag = 0;
+		node->gc_lock = 0;
 		for (i = 0; i < LF_XA_CHUNK_SIZE; i++) {
 			if ((i & mask) == 0) {
 				RCU_INIT_POINTER(node->slots[i], entry);
@@ -1373,6 +1403,7 @@ void lf_xas_split(struct xa_state *xas, void *entry, unsigned int order)
 					LF_XA_CHUNK_SIZE : 0;
 			child->refcnt = 0;
 			child->gc_flag = 0;
+			child->gc_lock = 0;
 			RCU_INIT_POINTER(child->parent, node);
 			node_set_marks(node, offset, child, marks);
 			rcu_assign_pointer(node->slots[offset],
@@ -1735,7 +1766,9 @@ void *lf_xas_find_conflict(struct xa_state *xas)
 			}
 			curr = lf_xas_descend(xas, node);
 			if (lf_xa_node_is_gc(curr)) {
-				curr = lf_xa_mk_node(node);
+				//curr = lf_xa_mk_node(node->parent);
+				lf_xas_reset(xas);
+				curr = lf_xas_start(xas);
 				lf_xa_put_node(node);
 				continue;
 			}

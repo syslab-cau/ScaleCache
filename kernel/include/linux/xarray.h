@@ -1093,6 +1093,7 @@ struct xa_node {
 	unsigned char	count;		/* Total entry count */
 	unsigned char	nr_values;	/* Value entry count */
 	unsigned char	gc_flag;	/* Under deleting */
+	unsigned char	gc_lock;	/* Under deleting */
 	unsigned short	refcnt;		/* Referencing users */
 	struct xa_node __rcu *parent;	/* NULL at top of tree */
 	struct xarray	*array;		/* The array we belong to */
