@@ -126,7 +126,7 @@ static int list_scripts(char *script_name, bool *custom,
 			SCRIPT_FULLPATH_LEN);
 	if (num < 0)
 		num = 0;
-	choice = ui__popup_menu(num + max_std, (char * const *)names, NULL);
+	choice = ui__popup_menu(num + max_std, (char * const *)names);
 	if (choice < 0) {
 		ret = -1;
 		goto out;

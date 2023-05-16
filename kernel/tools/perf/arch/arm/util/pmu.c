@@ -10,8 +10,7 @@
 #include <linux/string.h>
 
 #include "arm-spe.h"
-#include "hisi-ptt.h"
-#include "../../../util/pmu.h"
+#include "../../util/pmu.h"
 
 struct perf_event_attr
 *perf_pmu__get_default_config(struct perf_pmu *pmu __maybe_unused)
@@ -23,8 +22,6 @@ struct perf_event_attr
 #if defined(__aarch64__)
 	} else if (strstarts(pmu->name, ARM_SPE_PMU_NAME)) {
 		return arm_spe_pmu_default_config(pmu);
-	} else if (strstarts(pmu->name, HISI_PTT_PMU_NAME)) {
-		pmu->selectable = true;
 #endif
 	}
 

@@ -6266,6 +6266,8 @@ extern struct page *(*pagecache_get_page_in_scext4)(struct address_space *mappin
 extern struct page *scext4_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
 	int fgp_flags, gfp_t gfp_mask);
 
+extern struct list_lru scext4_shadow_nodes;
+
 static int __init scext4_init_fs(void)
 {
 	int i, err;
@@ -6319,6 +6321,8 @@ static int __init scext4_init_fs(void)
  	/* assign wb_workfn */
  	wb_workfn_in_scext4 = &scext4_wb_workfn;
 	pagecache_get_page_in_scext4 = &scext4_pagecache_get_page;
+	
+	__list_lru_init(&scext4_shadow_nodes, true, NULL, NULL);
 
 	return 0;
 out:

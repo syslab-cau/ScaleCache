@@ -368,8 +368,8 @@ out:
  * point where they would still be useful.
  */
 
-//static struct list_lru shadow_nodes;
-extern struct list_lru shadow_nodes;	
+struct list_lru scext4_shadow_nodes;
+//extern struct list_lru shadow_nodes;	
 
 void workingset_update_node(struct xa_node *node)
 {
@@ -388,12 +388,12 @@ void workingset_update_node(struct xa_node *node)
 
 	if (node->count && node->count == node->nr_values) {
 		if (list_empty(&node->private_list)) {
-			list_lru_add(&shadow_nodes, &node->private_list);
+			list_lru_add(&scext4_shadow_nodes, &node->private_list);
 			__inc_lruvec_slab_state(node, WORKINGSET_NODES);
 		}
 	} else {
 		if (!list_empty(&node->private_list)) {
-			list_lru_del(&shadow_nodes, &node->private_list);
+			list_lru_del(&scext4_shadow_nodes, &node->private_list);
 			__dec_lruvec_slab_state(node, WORKINGSET_NODES);
 		}
 	}
@@ -479,7 +479,7 @@ unsigned long scan_shadow_nodes(struct shrinker *shrinker,
 				       struct shrink_control *sc)
 {
 	/* list_lru lock nests inside the IRQ-safe i_pages lock */
-	return list_lru_shrink_walk_irq(&shadow_nodes, sc, shadow_lru_isolate,
+	return list_lru_shrink_walk_irq(&scext4_shadow_nodes, sc, shadow_lru_isolate,
 					NULL);
 }
 

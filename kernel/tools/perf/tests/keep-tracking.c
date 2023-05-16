@@ -5,7 +5,6 @@
 #include <sys/prctl.h>
 #include <perf/cpumap.h>
 #include <perf/evlist.h>
-#include <perf/mmap.h>
 
 #include "debug.h"
 #include "parse-events.h"
@@ -39,17 +38,17 @@ static int find_comm(struct evlist *evlist, const char *comm)
 	found = 0;
 	for (i = 0; i < evlist->core.nr_mmaps; i++) {
 		md = &evlist->mmap[i];
-		if (perf_mmap__read_init(&md->core) < 0)
+		if (perf_mmap__read_init(md) < 0)
 			continue;
-		while ((event = perf_mmap__read_event(&md->core)) != NULL) {
+		while ((event = perf_mmap__read_event(md)) != NULL) {
 			if (event->header.type == PERF_RECORD_COMM &&
 			    (pid_t)event->comm.pid == getpid() &&
 			    (pid_t)event->comm.tid == getpid() &&
 			    strcmp(event->comm.comm, comm) == 0)
 				found += 1;
-			perf_mmap__consume(&md->core);
+			perf_mmap__consume(md);
 		}
-		perf_mmap__read_done(&md->core);
+		perf_mmap__read_done(md);
 	}
 	return found;
 }
@@ -61,7 +60,7 @@ static int find_comm(struct evlist *evlist, const char *comm)
  * when an event is disabled but a dummy software event is not disabled.  If the
  * test passes %0 is returned, otherwise %-1 is returned.
  */
-static int test__keep_tracking(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__keep_tracking(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	struct record_opts opts = {
 		.mmap_pages	     = UINT_MAX,
@@ -89,10 +88,10 @@ static int test__keep_tracking(struct test_suite *test __maybe_unused, int subte
 
 	perf_evlist__set_maps(&evlist->core, cpus, threads);
 
-	CHECK__(parse_event(evlist, "dummy:u"));
-	CHECK__(parse_event(evlist, "cycles:u"));
+	CHECK__(parse_events(evlist, "dummy:u", NULL));
+	CHECK__(parse_events(evlist, "cycles:u", NULL));
 
-	evlist__config(evlist, &opts, NULL);
+	perf_evlist__config(evlist, &opts, NULL);
 
 	evsel = evlist__first(evlist);
 
@@ -154,11 +153,10 @@ out_err:
 	if (evlist) {
 		evlist__disable(evlist);
 		evlist__delete(evlist);
+	} else {
+		perf_cpu_map__put(cpus);
+		perf_thread_map__put(threads);
 	}
-	perf_cpu_map__put(cpus);
-	perf_thread_map__put(threads);
 
 	return err;
 }
-
-DEFINE_SUITE("Use a dummy software event to keep tracking", keep_tracking);

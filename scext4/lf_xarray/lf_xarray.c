@@ -429,10 +429,10 @@ static bool __lf_xas_nomem(struct xa_state *xas, gfp_t gfp)
 
 static void lf_xas_update(struct xa_state *xas, struct xa_node *node)
 {
-	//if (xas->xa_update)
-	//	xas->xa_update(node);
-	//else
-	//	LF_XA_NODE_BUG_ON(node, !list_empty(&node->private_list));
+//	if (xas->xa_update)
+//		xas->xa_update(node);
+//	else
+//		LF_XA_NODE_BUG_ON(node, !list_empty(&node->private_list));
 }
 
 static void *lf_xas_alloc(struct xa_state *xas, unsigned int shift)
@@ -562,6 +562,8 @@ static void lf_xas_shrink(struct xa_state *xas)
 	}
 }
 
+#include <linux/sched.h>
+
 /*
  * lf_xas_delete_node() - Attempt to delete an xa_node
  * @xas: Array operation state.
@@ -629,7 +631,8 @@ static void lf_xas_delete_node(struct xa_state *xas)
 				return;
 			}
 //			if (!--gg_count) {
-				printk("[pid %d] [@%px] current refcnt: %hu count: %u shift: %d, parent: @%px, Waiting for other referencing threads...\n", current->pid, node, refcnt, count, node->shift, node->parent);
+				//printk("[pid %d] [@%px] current refcnt: %hu count: %u shift: %d, parent: @%px, Waiting for other referencing threads...\n", current ? ((struct task_struct*)current)->pid : 0, node, refcnt, count, node->shift, node->parent);
+				printk("[@%px] current refcnt: %hu count: %u shift: %d, parent: @%px, Waiting for other referencing threads...\n", node, refcnt, count, node->shift, node->parent);
 				//printk("Node deletion GG!\n");
 				//LF_XA_NODE_BUG_ON(node, 1);
 				//return;
@@ -2735,7 +2738,7 @@ void lf_xa_dump_entry(const void *entry, unsigned long index, unsigned long shif
 			struct xa_node *node = lf_xa_to_node(entry);
 			lf_xa_dump_node(node);
 			for (i = 0; i < LF_XA_CHUNK_SIZE; i++)
-				lf_xa_dump_entry(node->slots[i],
+				lf_xa_dump_entry(__sync_fetch_and_add(&node->slots[i], 0),
 				      index + (i << node->shift), node->shift);
 		}
 	} else if (lf_xa_is_value(entry))

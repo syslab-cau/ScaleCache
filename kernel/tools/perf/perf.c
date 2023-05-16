@@ -55,7 +55,6 @@ struct cmd_struct {
 };
 
 static struct cmd_struct commands[] = {
-	{ "archive",	NULL,	0 },
 	{ "buildid-cache", cmd_buildid_cache, 0 },
 	{ "buildid-list", cmd_buildid_list, 0 },
 	{ "config",	cmd_config,	0 },
@@ -63,7 +62,6 @@ static struct cmd_struct commands[] = {
 	{ "diff",	cmd_diff,	0 },
 	{ "evlist",	cmd_evlist,	0 },
 	{ "help",	cmd_help,	0 },
-	{ "iostat",	NULL,	0 },
 	{ "kallsyms",	cmd_kallsyms,	0 },
 	{ "list",	cmd_list,	0 },
 	{ "record",	cmd_record,	0 },
@@ -90,8 +88,6 @@ static struct cmd_struct commands[] = {
 	{ "mem",	cmd_mem,	0 },
 	{ "data",	cmd_data,	0 },
 	{ "ftrace",	cmd_ftrace,	0 },
-	{ "daemon",	cmd_daemon,	0 },
-	{ "kwork",	cmd_kwork,	0 },
 };
 
 struct pager_config {
@@ -99,16 +95,10 @@ struct pager_config {
 	int val;
 };
 
-static bool same_cmd_with_prefix(const char *var, struct pager_config *c,
-				  const char *header)
-{
-	return (strstarts(var, header) && !strcmp(var + strlen(header), c->cmd));
-}
-
 static int pager_command_config(const char *var, const char *value, void *data)
 {
 	struct pager_config *c = data;
-	if (same_cmd_with_prefix(var, c, "pager."))
+	if (strstarts(var, "pager.") && !strcmp(var + 6, c->cmd))
 		c->val = perf_config_bool(var, value);
 	return 0;
 }
@@ -127,9 +117,9 @@ static int check_pager_config(const char *cmd)
 static int browser_command_config(const char *var, const char *value, void *data)
 {
 	struct pager_config *c = data;
-	if (same_cmd_with_prefix(var, c, "tui."))
+	if (strstarts(var, "tui.") && !strcmp(var + 4, c->cmd))
 		c->val = perf_config_bool(var, value);
-	if (same_cmd_with_prefix(var, c, "gtk."))
+	if (strstarts(var, "gtk.") && !strcmp(var + 4, c->cmd))
 		c->val = perf_config_bool(var, value) ? 2 : 0;
 	return 0;
 }
@@ -369,8 +359,6 @@ static void handle_internal_command(int argc, const char **argv)
 
 	for (i = 0; i < ARRAY_SIZE(commands); i++) {
 		struct cmd_struct *p = commands+i;
-		if (p->fn == NULL)
-			continue;
 		if (strcmp(p->cmd, cmd))
 			continue;
 		exit(run_builtin(p, argc, argv));
@@ -445,7 +433,7 @@ void pthread__unblock_sigwinch(void)
 static int libperf_print(enum libperf_print_level level,
 			 const char *fmt, va_list ap)
 {
-	return veprintf(level, verbose, fmt, ap);
+	return eprintf(level, verbose, fmt, ap);
 }
 
 int main(int argc, const char **argv)
@@ -453,8 +441,6 @@ int main(int argc, const char **argv)
 	int err;
 	const char *cmd;
 	char sbuf[STRERR_BUFSIZE];
-
-	perf_debug_setup();
 
 	/* libsubcmd init */
 	exec_cmd_init("perf", PREFIX, PERF_EXEC_PATH, EXEC_PATH_ENVIRONMENT);
@@ -543,6 +529,8 @@ int main(int argc, const char **argv)
 	 * forever while the signal goes to some other non interested thread.
 	 */
 	pthread__block_sigwinch();
+
+	perf_debug_setup();
 
 	while (1) {
 		static int done_help;

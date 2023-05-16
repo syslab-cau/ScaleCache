@@ -1,7 +1,9 @@
 [
     {
         "PublicDescription": "The number of core clock cycles",
-        "ArchStdEvent": "CPU_CYCLES"
+        "EventCode": "0x11",
+        "EventName": "CPU_CYCLES",
+        "BriefDescription": "Clock cycles"
     },
     {
         "PublicDescription": "FSU clocking gated off cycle",
@@ -14,5 +16,5 @@
         "EventCode": "0x110",
         "EventName": "Wait_CYCLES",
         "BriefDescription": "Wait state cycle"
-    }
+    },
 ]

@@ -101,7 +101,7 @@ out:
 	return TEST_FAIL;
 }
 
-static int test__hists_filter(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__hists_filter(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int err = TEST_FAIL;
 	struct machines machines;
@@ -111,10 +111,10 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 	TEST_ASSERT_VAL("No memory", evlist);
 
-	err = parse_event(evlist, "cpu-clock");
+	err = parse_events(evlist, "cpu-clock", NULL);
 	if (err)
 		goto out;
-	err = parse_event(evlist, "task-clock");
+	err = parse_events(evlist, "task-clock", NULL);
 	if (err)
 		goto out;
 	err = TEST_FAIL;
@@ -142,7 +142,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 		struct hists *hists = evsel__hists(evsel);
 
 		hists__collapse_resort(hists, NULL);
-		evsel__output_resort(evsel, NULL);
+		perf_evsel__output_resort(evsel, NULL);
 
 		if (verbose > 2) {
 			pr_info("Normal histogram\n");
@@ -150,13 +150,13 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 		}
 
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
 				hists->stats.total_period == 1000);
 		TEST_ASSERT_VAL("Unmatched nr samples",
-				hists->stats.nr_samples ==
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] ==
 				hists->stats.nr_non_filtered_samples);
 		TEST_ASSERT_VAL("Unmatched nr hist entries",
 				hists->nr_entries == hists->nr_non_filtered_entries);
@@ -175,7 +175,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 		/* normal stats should be invariant */
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
@@ -204,7 +204,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 		/* normal stats should be invariant */
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
@@ -239,7 +239,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 		/* normal stats should be invariant */
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
@@ -268,7 +268,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 		/* normal stats should be invariant */
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
@@ -299,7 +299,7 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 		/* normal stats should be invariant */
 		TEST_ASSERT_VAL("Invalid nr samples",
-				hists->stats.nr_samples == 10);
+				hists->stats.nr_events[PERF_RECORD_SAMPLE] == 10);
 		TEST_ASSERT_VAL("Invalid nr hist entries",
 				hists->nr_entries == 9);
 		TEST_ASSERT_VAL("Invalid total period",
@@ -325,5 +325,3 @@ out:
 
 	return err;
 }
-
-DEFINE_SUITE("Filter hist entries", hists_filter);

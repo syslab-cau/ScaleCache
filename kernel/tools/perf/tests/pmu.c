@@ -137,7 +137,7 @@ static struct list_head *test_terms_list(void)
 	return &terms;
 }
 
-static int test__pmu(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__pmu(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	char *format = test_format_dir_get();
 	LIST_HEAD(formats);
@@ -156,8 +156,8 @@ static int test__pmu(struct test_suite *test __maybe_unused, int subtest __maybe
 		if (ret)
 			break;
 
-		ret = perf_pmu__config_terms("perf-pmu-test", &formats, &attr,
-					     terms, false, NULL);
+		ret = perf_pmu__config_terms(&formats, &attr, terms,
+					     false, NULL);
 		if (ret)
 			break;
 
@@ -177,5 +177,3 @@ static int test__pmu(struct test_suite *test __maybe_unused, int subtest __maybe
 	test_format_dir_put(format);
 	return ret;
 }
-
-DEFINE_SUITE("Parse perf pmu format", pmu);

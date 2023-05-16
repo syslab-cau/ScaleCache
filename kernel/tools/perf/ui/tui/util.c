@@ -23,7 +23,7 @@ static void ui_browser__argv_write(struct ui_browser *browser,
 	ui_browser__write_nstring(browser, *arg, browser->width);
 }
 
-static int popup_menu__run(struct ui_browser *menu, int *keyp)
+static int popup_menu__run(struct ui_browser *menu)
 {
 	int key;
 
@@ -45,11 +45,6 @@ static int popup_menu__run(struct ui_browser *menu, int *keyp)
 			key = -1;
 			break;
 		default:
-			if (keyp) {
-				*keyp = key;
-				key = menu->nr_entries;
-				break;
-			}
 			continue;
 		}
 
@@ -60,7 +55,7 @@ static int popup_menu__run(struct ui_browser *menu, int *keyp)
 	return key;
 }
 
-int ui__popup_menu(int argc, char * const argv[], int *keyp)
+int ui__popup_menu(int argc, char * const argv[])
 {
 	struct ui_browser menu = {
 		.entries    = (void *)argv,
@@ -69,7 +64,8 @@ int ui__popup_menu(int argc, char * const argv[], int *keyp)
 		.write	    = ui_browser__argv_write,
 		.nr_entries = argc,
 	};
-	return popup_menu__run(&menu, keyp);
+
+	return popup_menu__run(&menu);
 }
 
 int ui_browser__input_window(const char *title, const char *text, char *input,
@@ -95,7 +91,7 @@ int ui_browser__input_window(const char *title, const char *text, char *input,
 		t = sep + 1;
 	}
 
-	mutex_lock(&ui__lock);
+	pthread_mutex_lock(&ui__lock);
 
 	max_len += 2;
 	nr_lines += 8;
@@ -125,17 +121,17 @@ int ui_browser__input_window(const char *title, const char *text, char *input,
 	SLsmg_write_nstring((char *)exit_msg, max_len);
 	SLsmg_refresh();
 
-	mutex_unlock(&ui__lock);
+	pthread_mutex_unlock(&ui__lock);
 
 	x += 2;
 	len = 0;
 	key = ui__getch(delay_secs);
 	while (key != K_TIMER && key != K_ENTER && key != K_ESC) {
-		mutex_lock(&ui__lock);
+		pthread_mutex_lock(&ui__lock);
 
 		if (key == K_BKSPC) {
 			if (len == 0) {
-				mutex_unlock(&ui__lock);
+				pthread_mutex_unlock(&ui__lock);
 				goto next_key;
 			}
 			SLsmg_gotorc(y, x + --len);
@@ -147,7 +143,7 @@ int ui_browser__input_window(const char *title, const char *text, char *input,
 		}
 		SLsmg_refresh();
 
-		mutex_unlock(&ui__lock);
+		pthread_mutex_unlock(&ui__lock);
 
 		/* XXX more graceful overflow handling needed */
 		if (len == sizeof(buf) - 1) {
@@ -215,19 +211,19 @@ void __ui__info_window(const char *title, const char *text, const char *exit_msg
 
 void ui__info_window(const char *title, const char *text)
 {
-	mutex_lock(&ui__lock);
+	pthread_mutex_lock(&ui__lock);
 	__ui__info_window(title, text, NULL);
 	SLsmg_refresh();
-	mutex_unlock(&ui__lock);
+	pthread_mutex_unlock(&ui__lock);
 }
 
 int ui__question_window(const char *title, const char *text,
 			const char *exit_msg, int delay_secs)
 {
-	mutex_lock(&ui__lock);
+	pthread_mutex_lock(&ui__lock);
 	__ui__info_window(title, text, exit_msg);
 	SLsmg_refresh();
-	mutex_unlock(&ui__lock);
+	pthread_mutex_unlock(&ui__lock);
 	return ui__getch(delay_secs);
 }
 

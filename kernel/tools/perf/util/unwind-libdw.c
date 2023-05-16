@@ -107,10 +107,9 @@ static int entry(u64 ip, struct unwind_info *ui)
 	if (__report_module(&al, ip, ui))
 		return -1;
 
-	e->ip	  = ip;
-	e->ms.maps = al.maps;
-	e->ms.map = al.map;
-	e->ms.sym = al.sym;
+	e->ip  = ip;
+	e->map = al.map;
+	e->sym = al.sym;
 
 	pr_debug("unwind: %s:ip = 0x%" PRIx64 " (0x%" PRIx64 ")\n",
 		 al.sym ? al.sym->name : "''",
@@ -200,8 +199,7 @@ frame_callback(Dwfl_Frame *state, void *arg)
 	bool isactivation;
 
 	if (!dwfl_frame_pc(state, &pc, NULL)) {
-		if (!ui->best_effort)
-			pr_err("%s", dwfl_errmsg(-1));
+		pr_err("%s", dwfl_errmsg(-1));
 		return DWARF_CB_ABORT;
 	}
 
@@ -209,8 +207,7 @@ frame_callback(Dwfl_Frame *state, void *arg)
 	report_module(pc, ui);
 
 	if (!dwfl_frame_pc(state, &pc, &isactivation)) {
-		if (!ui->best_effort)
-			pr_err("%s", dwfl_errmsg(-1));
+		pr_err("%s", dwfl_errmsg(-1));
 		return DWARF_CB_ABORT;
 	}
 
@@ -224,17 +221,15 @@ frame_callback(Dwfl_Frame *state, void *arg)
 int unwind__get_entries(unwind_entry_cb_t cb, void *arg,
 			struct thread *thread,
 			struct perf_sample *data,
-			int max_stack,
-			bool best_effort)
+			int max_stack)
 {
 	struct unwind_info *ui, ui_buf = {
 		.sample		= data,
 		.thread		= thread,
-		.machine	= thread->maps->machine,
+		.machine	= thread->mg->machine,
 		.cb		= cb,
 		.arg		= arg,
 		.max_stack	= max_stack,
-		.best_effort    = best_effort
 	};
 	Dwarf_Word ip;
 	int err = -EINVAL, i;

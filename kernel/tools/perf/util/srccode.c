@@ -16,7 +16,6 @@
 #include "srccode.h"
 #include "debug.h"
 #include <internal/lib.h> // page_size
-#include "fncache.h"
 
 #define MAXSRCCACHE (32*1024*1024)
 #define MAXSRCFILES     64
@@ -36,6 +35,14 @@ static struct hlist_head srcfile_htab[SRC_HTAB_SZ];
 static LIST_HEAD(srcfile_list);
 static long map_total_sz;
 static int num_srcfiles;
+
+static unsigned shash(unsigned char *s)
+{
+	unsigned h = 0;
+	while (*s)
+		h = 65599 * h + *s++;
+	return h ^ (h >> 16);
+}
 
 static int countlines(char *map, int maplen)
 {
@@ -97,7 +104,8 @@ static struct srcfile *find_srcfile(char *fn)
 	hlist_for_each_entry (h, &srcfile_htab[hval], hash_nd) {
 		if (!strcmp(fn, h->fn)) {
 			/* Move to front */
-			list_move(&h->nd, &srcfile_list);
+			list_del(&h->nd);
+			list_add(&h->nd, &srcfile_list);
 			return h;
 		}
 	}

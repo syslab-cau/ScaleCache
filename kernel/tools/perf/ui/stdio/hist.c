@@ -8,14 +8,13 @@
 #include "../../util/event.h"
 #include "../../util/hist.h"
 #include "../../util/map.h"
-#include "../../util/maps.h"
+#include "../../util/map_groups.h"
 #include "../../util/symbol.h"
 #include "../../util/sort.h"
 #include "../../util/evsel.h"
 #include "../../util/srcline.h"
 #include "../../util/string2.h"
 #include "../../util/thread.h"
-#include "../../util/block-info.h"
 #include <linux/ctype.h>
 #include <linux/zalloc.h>
 
@@ -559,25 +558,6 @@ static int hist_entry__block_fprintf(struct hist_entry *he,
 	return ret;
 }
 
-static int hist_entry__individual_block_fprintf(struct hist_entry *he,
-						char *bf, size_t size,
-						FILE *fp)
-{
-	int ret = 0;
-
-	struct perf_hpp hpp = {
-		.buf		= bf,
-		.size		= size,
-		.skip		= false,
-	};
-
-	hist_entry__snprintf(he, &hpp);
-	if (!hpp.skip)
-		ret += fprintf(fp, "%s\n", bf);
-
-	return ret;
-}
-
 static int hist_entry__fprintf(struct hist_entry *he, size_t size,
 			       char *bf, size_t bfsz, FILE *fp,
 			       bool ignore_callchains)
@@ -599,9 +579,6 @@ static int hist_entry__fprintf(struct hist_entry *he, size_t size,
 
 	if (symbol_conf.report_block)
 		return hist_entry__block_fprintf(he, bf, size, fp);
-
-	if (symbol_conf.report_individual_block)
-		return hist_entry__individual_block_fprintf(he, bf, size, fp);
 
 	hist_entry__snprintf(he, &hpp);
 
@@ -857,11 +834,7 @@ size_t hists__fprintf(struct hists *hists, bool show_header, int max_rows,
 		if (h->filtered)
 			continue;
 
-		if (symbol_conf.report_individual_block)
-			percent = block_info__total_cycles_percent(h);
-		else
-			percent = hist_entry__get_percent_limit(h);
-
+		percent = hist_entry__get_percent_limit(h);
 		if (percent < min_pcnt)
 			continue;
 
@@ -885,7 +858,7 @@ size_t hists__fprintf(struct hists *hists, bool show_header, int max_rows,
 		}
 
 		if (h->ms.map == NULL && verbose > 1) {
-			maps__fprintf(h->thread->maps, fp);
+			map_groups__fprintf(h->thread->mg, fp);
 			fprintf(fp, "%.10s end\n", graph_dotted_line);
 		}
 	}
@@ -897,12 +870,10 @@ out:
 	return ret;
 }
 
-size_t events_stats__fprintf(struct events_stats *stats, FILE *fp,
-			     bool skip_empty)
+size_t events_stats__fprintf(struct events_stats *stats, FILE *fp)
 {
 	int i;
 	size_t ret = 0;
-	u32 total = stats->nr_events[0];
 
 	for (i = 0; i < PERF_RECORD_HEADER_MAX; ++i) {
 		const char *name;
@@ -910,17 +881,8 @@ size_t events_stats__fprintf(struct events_stats *stats, FILE *fp,
 		name = perf_event__name(i);
 		if (!strcmp(name, "UNKNOWN"))
 			continue;
-		if (skip_empty && !stats->nr_events[i])
-			continue;
 
-		if (i && total) {
-			ret += fprintf(fp, "%16s events: %10d  (%4.1f%%)\n",
-				       name, stats->nr_events[i],
-				       100.0 * stats->nr_events[i] / total);
-		} else {
-			ret += fprintf(fp, "%16s events: %10d\n",
-				       name, stats->nr_events[i]);
-		}
+		ret += fprintf(fp, "%16s events: %10d\n", name, stats->nr_events[i]);
 	}
 
 	return ret;

@@ -1,3 +1,3 @@
-#include <bpf/bpf.h>
+#include <bpf.h>
 
 license(GPL);

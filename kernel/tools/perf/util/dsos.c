@@ -2,76 +2,12 @@
 #include "debug.h"
 #include "dsos.h"
 #include "dso.h"
-#include "util.h"
 #include "vdso.h"
 #include "namespaces.h"
-#include <errno.h>
 #include <libgen.h>
 #include <stdlib.h>
 #include <string.h>
 #include <symbol.h> // filename__read_build_id
-#include <unistd.h>
-
-static int __dso_id__cmp(struct dso_id *a, struct dso_id *b)
-{
-	if (a->maj > b->maj) return -1;
-	if (a->maj < b->maj) return 1;
-
-	if (a->min > b->min) return -1;
-	if (a->min < b->min) return 1;
-
-	if (a->ino > b->ino) return -1;
-	if (a->ino < b->ino) return 1;
-
-	/*
-	 * Synthesized MMAP events have zero ino_generation, avoid comparing
-	 * them with MMAP events with actual ino_generation.
-	 *
-	 * I found it harmful because the mismatch resulted in a new
-	 * dso that did not have a build ID whereas the original dso did have a
-	 * build ID. The build ID was essential because the object was not found
-	 * otherwise. - Adrian
-	 */
-	if (a->ino_generation && b->ino_generation) {
-		if (a->ino_generation > b->ino_generation) return -1;
-		if (a->ino_generation < b->ino_generation) return 1;
-	}
-
-	return 0;
-}
-
-static bool dso_id__empty(struct dso_id *id)
-{
-	if (!id)
-		return true;
-
-	return !id->maj && !id->min && !id->ino && !id->ino_generation;
-}
-
-static void dso__inject_id(struct dso *dso, struct dso_id *id)
-{
-	dso->id.maj = id->maj;
-	dso->id.min = id->min;
-	dso->id.ino = id->ino;
-	dso->id.ino_generation = id->ino_generation;
-}
-
-static int dso_id__cmp(struct dso_id *a, struct dso_id *b)
-{
-	/*
-	 * The second is always dso->id, so zeroes if not set, assume passing
-	 * NULL for a means a zeroed id
-	 */
-	if (dso_id__empty(a) || dso_id__empty(b))
-		return 0;
-
-	return __dso_id__cmp(a, b);
-}
-
-int dso__cmp_id(struct dso *a, struct dso *b)
-{
-	return __dso_id__cmp(&a->id, &b->id);
-}
 
 bool __dsos__read_build_ids(struct list_head *head, bool with_hits)
 {
@@ -87,19 +23,10 @@ bool __dsos__read_build_ids(struct list_head *head, bool with_hits)
 			continue;
 		}
 		nsinfo__mountns_enter(pos->nsinfo, &nsc);
-		if (filename__read_build_id(pos->long_name, &pos->bid) > 0) {
+		if (filename__read_build_id(pos->long_name, pos->build_id,
+					    sizeof(pos->build_id)) > 0) {
 			have_build_id	  = true;
 			pos->has_build_id = true;
-		} else if (errno == ENOENT && pos->nsinfo) {
-			char *new_name = filename_with_chroot(pos->nsinfo->pid,
-							      pos->long_name);
-
-			if (new_name && filename__read_build_id(new_name,
-								&pos->bid) > 0) {
-				have_build_id = true;
-				pos->has_build_id = true;
-			}
-			free(new_name);
 		}
 		nsinfo__mountns_exit(&nsc);
 	}
@@ -107,30 +34,12 @@ bool __dsos__read_build_ids(struct list_head *head, bool with_hits)
 	return have_build_id;
 }
 
-static int __dso__cmp_long_name(const char *long_name, struct dso_id *id, struct dso *b)
-{
-	int rc = strcmp(long_name, b->long_name);
-	return rc ?: dso_id__cmp(id, &b->id);
-}
-
-static int __dso__cmp_short_name(const char *short_name, struct dso_id *id, struct dso *b)
-{
-	int rc = strcmp(short_name, b->short_name);
-	return rc ?: dso_id__cmp(id, &b->id);
-}
-
-static int dso__cmp_short_name(struct dso *a, struct dso *b)
-{
-	return __dso__cmp_short_name(a->short_name, &a->id, b);
-}
-
 /*
  * Find a matching entry and/or link current entry to RB tree.
  * Either one of the dso or name parameter must be non-NULL or the
  * function will not work.
  */
-struct dso *__dsos__findnew_link_by_longname_id(struct rb_root *root, struct dso *dso,
-						const char *name, struct dso_id *id)
+struct dso *__dsos__findnew_link_by_longname(struct rb_root *root, struct dso *dso, const char *name)
 {
 	struct rb_node **p = &root->rb_node;
 	struct rb_node  *parent = NULL;
@@ -142,7 +51,7 @@ struct dso *__dsos__findnew_link_by_longname_id(struct rb_root *root, struct dso
 	 */
 	while (*p) {
 		struct dso *this = rb_entry(*p, struct dso, rb_node);
-		int rc = __dso__cmp_long_name(name, id, this);
+		int rc = strcmp(name, this->long_name);
 
 		parent = *p;
 		if (rc == 0) {
@@ -158,7 +67,7 @@ struct dso *__dsos__findnew_link_by_longname_id(struct rb_root *root, struct dso
 			 * In this case, the short name should be different.
 			 * Comparing the short names to differentiate the DSOs.
 			 */
-			rc = dso__cmp_short_name(dso, this);
+			rc = strcmp(dso->short_name, this->short_name);
 			if (rc == 0) {
 				pr_err("Duplicated dso name: %s\n", name);
 				return NULL;
@@ -181,7 +90,7 @@ struct dso *__dsos__findnew_link_by_longname_id(struct rb_root *root, struct dso
 void __dsos__add(struct dsos *dsos, struct dso *dso)
 {
 	list_add_tail(&dso->node, &dsos->head);
-	__dsos__findnew_link_by_longname_id(&dsos->root, dso, NULL, &dso->id);
+	__dsos__findnew_link_by_longname(&dsos->root, dso, NULL);
 	/*
 	 * It is now in the linked list, grab a reference, then garbage collect
 	 * this when needing memory, by looking at LRU dso instances in the
@@ -212,27 +121,26 @@ void dsos__add(struct dsos *dsos, struct dso *dso)
 	up_write(&dsos->lock);
 }
 
-static struct dso *__dsos__findnew_by_longname_id(struct rb_root *root, const char *name, struct dso_id *id)
-{
-	return __dsos__findnew_link_by_longname_id(root, NULL, name, id);
-}
-
-static struct dso *__dsos__find_id(struct dsos *dsos, const char *name, struct dso_id *id, bool cmp_short)
+struct dso *__dsos__find(struct dsos *dsos, const char *name, bool cmp_short)
 {
 	struct dso *pos;
 
 	if (cmp_short) {
 		list_for_each_entry(pos, &dsos->head, node)
-			if (__dso__cmp_short_name(name, id, pos) == 0)
+			if (strcmp(pos->short_name, name) == 0)
 				return pos;
 		return NULL;
 	}
-	return __dsos__findnew_by_longname_id(&dsos->root, name, id);
+	return __dsos__findnew_by_longname(&dsos->root, name);
 }
 
-struct dso *__dsos__find(struct dsos *dsos, const char *name, bool cmp_short)
+struct dso *dsos__find(struct dsos *dsos, const char *name, bool cmp_short)
 {
-	return __dsos__find_id(dsos, name, NULL, cmp_short);
+	struct dso *dso;
+	down_read(&dsos->lock);
+	dso = __dsos__find(dsos, name, cmp_short);
+	up_read(&dsos->lock);
+	return dso;
 }
 
 static void dso__set_basename(struct dso *dso)
@@ -267,9 +175,9 @@ static void dso__set_basename(struct dso *dso)
 	dso__set_short_name(dso, base, true);
 }
 
-static struct dso *__dsos__addnew_id(struct dsos *dsos, const char *name, struct dso_id *id)
+struct dso *__dsos__addnew(struct dsos *dsos, const char *name)
 {
-	struct dso *dso = dso__new_id(name, id);
+	struct dso *dso = dso__new(name);
 
 	if (dso != NULL) {
 		__dsos__add(dsos, dso);
@@ -280,26 +188,18 @@ static struct dso *__dsos__addnew_id(struct dsos *dsos, const char *name, struct
 	return dso;
 }
 
-struct dso *__dsos__addnew(struct dsos *dsos, const char *name)
+struct dso *__dsos__findnew(struct dsos *dsos, const char *name)
 {
-	return __dsos__addnew_id(dsos, name, NULL);
+	struct dso *dso = __dsos__find(dsos, name, false);
+
+	return dso ? dso : __dsos__addnew(dsos, name);
 }
 
-static struct dso *__dsos__findnew_id(struct dsos *dsos, const char *name, struct dso_id *id)
-{
-	struct dso *dso = __dsos__find_id(dsos, name, id, false);
-
-	if (dso && dso_id__empty(&dso->id) && !dso_id__empty(id))
-		dso__inject_id(dso, id);
-
-	return dso ? dso : __dsos__addnew_id(dsos, name, id);
-}
-
-struct dso *dsos__findnew_id(struct dsos *dsos, const char *name, struct dso_id *id)
+struct dso *dsos__findnew(struct dsos *dsos, const char *name)
 {
 	struct dso *dso;
 	down_write(&dsos->lock);
-	dso = dso__get(__dsos__findnew_id(dsos, name, id));
+	dso = dso__get(__dsos__findnew(dsos, name));
 	up_write(&dsos->lock);
 	return dso;
 }
@@ -311,12 +211,10 @@ size_t __dsos__fprintf_buildid(struct list_head *head, FILE *fp,
 	size_t ret = 0;
 
 	list_for_each_entry(pos, head, node) {
-		char sbuild_id[SBUILD_ID_SIZE];
-
 		if (skip && skip(pos, parm))
 			continue;
-		build_id__sprintf(&pos->bid, sbuild_id);
-		ret += fprintf(fp, "%-40s %s\n", sbuild_id, pos->long_name);
+		ret += dso__fprintf_buildid(pos, fp);
+		ret += fprintf(fp, " %s\n", pos->long_name);
 	}
 	return ret;
 }

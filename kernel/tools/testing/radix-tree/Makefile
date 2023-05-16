@@ -4,8 +4,9 @@ CFLAGS += -I. -I../../include -g -Og -Wall -D_LGPL_SOURCE -fsanitize=address \
 	  -fsanitize=undefined
 LDFLAGS += -fsanitize=address -fsanitize=undefined
 LDLIBS+= -lpthread -lurcu
-TARGETS = main idr-test multiorder xarray
+TARGETS = main idr-test multiorder xarray lfxarray
 CORE_OFILES := xarray.o radix-tree.o idr.o linux.o test.o find_bit.o bitmap.o
+LF_CORE_OFILES := lfxarray.o xarray.o radix-tree.o idr.o linux.o test.o find_bit.o bitmap.o
 OFILES = main.o $(CORE_OFILES) regression1.o regression2.o regression3.o \
 	 regression4.o tag_check.o multiorder.o idr-test.o iteration_check.o \
 	 iteration_check_2.o benchmark.o
@@ -27,6 +28,7 @@ idr-test.o: ../../../lib/test_ida.c
 idr-test: idr-test.o $(CORE_OFILES)
 
 xarray: $(CORE_OFILES)
+lfxarray: $(LF_CORE_OFILES)
 
 multiorder: multiorder.o $(CORE_OFILES)
 
@@ -49,6 +51,7 @@ idr.c: ../../../lib/idr.c
 	sed -e 's/^static //' -e 's/__always_inline //' -e 's/inline //' < $< > $@
 
 xarray.o: ../../../lib/xarray.c ../../../lib/test_xarray.c
+lfxarray.o: ../../../lib/xarray.c ../../../../scext4/lf_xarray/lf_xarray.c ../../../lib/test_lf_xarray.c
 
 generated/map-shift.h:
 	@if ! grep -qws $(SHIFT) generated/map-shift.h; then		\

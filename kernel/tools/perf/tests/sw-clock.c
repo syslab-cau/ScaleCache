@@ -15,7 +15,6 @@
 #include "util/mmap.h"
 #include "util/thread_map.h"
 #include <perf/evlist.h>
-#include <perf/mmap.h>
 
 #define NR_LOOPS  10000000
 
@@ -42,8 +41,8 @@ static int __test__sw_clock_freq(enum perf_sw_ids clock_id)
 		.disabled = 1,
 		.freq = 1,
 	};
-	struct perf_cpu_map *cpus = NULL;
-	struct perf_thread_map *threads = NULL;
+	struct perf_cpu_map *cpus;
+	struct perf_thread_map *threads;
 	struct mmap *md;
 
 	attr.sample_freq = 500;
@@ -56,7 +55,7 @@ static int __test__sw_clock_freq(enum perf_sw_ids clock_id)
 
 	evsel = evsel__new(&attr);
 	if (evsel == NULL) {
-		pr_debug("evsel__new\n");
+		pr_debug("perf_evsel__new\n");
 		goto out_delete_evlist;
 	}
 	evlist__add(evlist, evsel);
@@ -66,10 +65,13 @@ static int __test__sw_clock_freq(enum perf_sw_ids clock_id)
 	if (!cpus || !threads) {
 		err = -ENOMEM;
 		pr_debug("Not enough memory to create thread/cpu maps\n");
-		goto out_delete_evlist;
+		goto out_free_maps;
 	}
 
 	perf_evlist__set_maps(&evlist->core, cpus, threads);
+
+	cpus	= NULL;
+	threads = NULL;
 
 	if (evlist__open(evlist)) {
 		const char *knob = "/proc/sys/kernel/perf_event_max_sample_rate";
@@ -97,16 +99,16 @@ static int __test__sw_clock_freq(enum perf_sw_ids clock_id)
 	evlist__disable(evlist);
 
 	md = &evlist->mmap[0];
-	if (perf_mmap__read_init(&md->core) < 0)
+	if (perf_mmap__read_init(md) < 0)
 		goto out_init;
 
-	while ((event = perf_mmap__read_event(&md->core)) != NULL) {
+	while ((event = perf_mmap__read_event(md)) != NULL) {
 		struct perf_sample sample;
 
 		if (event->header.type != PERF_RECORD_SAMPLE)
 			goto next_event;
 
-		err = evlist__parse_sample(evlist, event, &sample);
+		err = perf_evlist__parse_sample(evlist, event, &sample);
 		if (err < 0) {
 			pr_debug("Error during parse sample\n");
 			goto out_delete_evlist;
@@ -115,9 +117,9 @@ static int __test__sw_clock_freq(enum perf_sw_ids clock_id)
 		total_periods += sample.period;
 		nr_samples++;
 next_event:
-		perf_mmap__consume(&md->core);
+		perf_mmap__consume(md);
 	}
-	perf_mmap__read_done(&md->core);
+	perf_mmap__read_done(md);
 
 out_init:
 	if ((u64) nr_samples == total_periods) {
@@ -126,14 +128,15 @@ out_init:
 		err = -1;
 	}
 
-out_delete_evlist:
+out_free_maps:
 	perf_cpu_map__put(cpus);
 	perf_thread_map__put(threads);
+out_delete_evlist:
 	evlist__delete(evlist);
 	return err;
 }
 
-static int test__sw_clock_freq(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__sw_clock_freq(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int ret;
 
@@ -143,5 +146,3 @@ static int test__sw_clock_freq(struct test_suite *test __maybe_unused, int subte
 
 	return ret;
 }
-
-DEFINE_SUITE("Software clock events period values", sw_clock_freq);

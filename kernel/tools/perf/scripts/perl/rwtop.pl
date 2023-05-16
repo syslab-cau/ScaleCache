@@ -35,7 +35,7 @@ if (!$interval) {
 sub syscalls::sys_exit_read
 {
     my ($event_name, $context, $common_cpu, $common_secs, $common_nsecs,
-	$common_pid, $common_comm, $common_callchain,
+	$common_pid, $common_comm,
 	$nr, $ret) = @_;
 
     print_check();
@@ -53,7 +53,7 @@ sub syscalls::sys_exit_read
 sub syscalls::sys_enter_read
 {
     my ($event_name, $context, $common_cpu, $common_secs, $common_nsecs,
-	$common_pid, $common_comm, $common_callchain,
+	$common_pid, $common_comm,
 	$nr, $fd, $buf, $count) = @_;
 
     print_check();
@@ -66,7 +66,7 @@ sub syscalls::sys_enter_read
 sub syscalls::sys_exit_write
 {
     my ($event_name, $context, $common_cpu, $common_secs, $common_nsecs,
-	$common_pid, $common_comm, $common_callchain,
+	$common_pid, $common_comm,
 	$nr, $ret) = @_;
 
     print_check();
@@ -79,7 +79,7 @@ sub syscalls::sys_exit_write
 sub syscalls::sys_enter_write
 {
     my ($event_name, $context, $common_cpu, $common_secs, $common_nsecs,
-	$common_pid, $common_comm, $common_callchain,
+	$common_pid, $common_comm,
 	$nr, $fd, $buf, $count) = @_;
 
     print_check();
@@ -197,7 +197,7 @@ sub print_unhandled
 sub trace_unhandled
 {
     my ($event_name, $context, $common_cpu, $common_secs, $common_nsecs,
-	$common_pid, $common_comm, $common_callchain) = @_;
+	$common_pid, $common_comm) = @_;
 
     $unhandled{$event_name}++;
 }

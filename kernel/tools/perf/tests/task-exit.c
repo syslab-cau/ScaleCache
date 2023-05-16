@@ -12,7 +12,6 @@
 #include <linux/string.h>
 #include <perf/cpumap.h>
 #include <perf/evlist.h>
-#include <perf/mmap.h>
 
 static int exited;
 static int nr_exit;
@@ -23,7 +22,7 @@ static void sig_handler(int sig __maybe_unused)
 }
 
 /*
- * evlist__prepare_workload will send a SIGUSR1 if the fork fails, since
+ * perf_evlist__prepare_workload will send a SIGUSR1 if the fork fails, since
  * we asked by setting its exec_error to this handler.
  */
 static void workload_exec_failed_signal(int signo __maybe_unused,
@@ -39,7 +38,7 @@ static void workload_exec_failed_signal(int signo __maybe_unused,
  * if the number of exit event reported by the kernel is 1 or not
  * in order to check the kernel returns correct number of event.
  */
-static int test__task_exit(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__task_exit(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int err = -1;
 	union perf_event *event;
@@ -58,16 +57,16 @@ static int test__task_exit(struct test_suite *test __maybe_unused, int subtest _
 
 	signal(SIGCHLD, sig_handler);
 
-	evlist = evlist__new_default();
+	evlist = perf_evlist__new_default();
 	if (evlist == NULL) {
-		pr_debug("evlist__new_default\n");
+		pr_debug("perf_evlist__new_default\n");
 		return -1;
 	}
 
 	/*
 	 * Create maps of threads and cpus to monitor. In this case
 	 * we start with all threads and cpus (-1, -1) but then in
-	 * evlist__prepare_workload we'll fill in the only thread
+	 * perf_evlist__prepare_workload we'll fill in the only thread
 	 * we're monitoring, the one forked there.
 	 */
 	cpus = perf_cpu_map__dummy_new();
@@ -75,12 +74,16 @@ static int test__task_exit(struct test_suite *test __maybe_unused, int subtest _
 	if (!cpus || !threads) {
 		err = -ENOMEM;
 		pr_debug("Not enough memory to create thread/cpu maps\n");
-		goto out_delete_evlist;
+		goto out_free_maps;
 	}
 
 	perf_evlist__set_maps(&evlist->core, cpus, threads);
 
-	err = evlist__prepare_workload(evlist, &target, argv, false, workload_exec_failed_signal);
+	cpus	= NULL;
+	threads = NULL;
+
+	err = perf_evlist__prepare_workload(evlist, &target, argv, false,
+					    workload_exec_failed_signal);
 	if (err < 0) {
 		pr_debug("Couldn't run the workload!\n");
 		goto out_delete_evlist;
@@ -112,20 +115,20 @@ static int test__task_exit(struct test_suite *test __maybe_unused, int subtest _
 		goto out_delete_evlist;
 	}
 
-	evlist__start_workload(evlist);
+	perf_evlist__start_workload(evlist);
 
 retry:
 	md = &evlist->mmap[0];
-	if (perf_mmap__read_init(&md->core) < 0)
+	if (perf_mmap__read_init(md) < 0)
 		goto out_init;
 
-	while ((event = perf_mmap__read_event(&md->core)) != NULL) {
+	while ((event = perf_mmap__read_event(md)) != NULL) {
 		if (event->header.type == PERF_RECORD_EXIT)
 			nr_exit++;
 
-		perf_mmap__consume(&md->core);
+		perf_mmap__consume(md);
 	}
-	perf_mmap__read_done(&md->core);
+	perf_mmap__read_done(md);
 
 out_init:
 	if (!exited || !nr_exit) {
@@ -134,7 +137,7 @@ out_init:
 		if (retry_count++ > 1000) {
 			pr_debug("Failed after retrying 1000 times\n");
 			err = -1;
-			goto out_delete_evlist;
+			goto out_free_maps;
 		}
 
 		goto retry;
@@ -145,11 +148,10 @@ out_init:
 		err = -1;
 	}
 
-out_delete_evlist:
+out_free_maps:
 	perf_cpu_map__put(cpus);
 	perf_thread_map__put(threads);
+out_delete_evlist:
 	evlist__delete(evlist);
 	return err;
 }
-
-DEFINE_SUITE("Number of exit events of a simple workload", task_exit);

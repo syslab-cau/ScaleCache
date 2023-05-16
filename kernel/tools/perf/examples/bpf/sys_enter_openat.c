@@ -14,7 +14,7 @@
  * the return value.
  */
 
-#include <bpf/bpf.h>
+#include <bpf.h>
 
 struct syscall_enter_openat_args {
 	unsigned long long unused;

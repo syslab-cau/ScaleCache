@@ -19,21 +19,21 @@
 
 #include <api/fs/fs.h>
 
-int thread__init_maps(struct thread *thread, struct machine *machine)
+int thread__init_map_groups(struct thread *thread, struct machine *machine)
 {
 	pid_t pid = thread->pid_;
 
 	if (pid == thread->tid || pid == -1) {
-		thread->maps = maps__new(machine);
+		thread->mg = map_groups__new(machine);
 	} else {
 		struct thread *leader = __machine__findnew_thread(machine, pid, pid);
 		if (leader) {
-			thread->maps = maps__get(leader->maps);
+			thread->mg = map_groups__get(leader->mg);
 			thread__put(leader);
 		}
 	}
 
-	return thread->maps ? 0 : -1;
+	return thread->mg ? 0 : -1;
 }
 
 struct thread *thread__new(pid_t pid, pid_t tid)
@@ -47,8 +47,6 @@ struct thread *thread__new(pid_t pid, pid_t tid)
 		thread->tid = tid;
 		thread->ppid = -1;
 		thread->cpu = -1;
-		thread->guest_cpu = -1;
-		thread->lbr_stitch_enable = false;
 		INIT_LIST_HEAD(&thread->namespaces_list);
 		INIT_LIST_HEAD(&thread->comm_list);
 		init_rwsem(&thread->namespaces_lock);
@@ -88,9 +86,9 @@ void thread__delete(struct thread *thread)
 
 	thread_stack__free(thread);
 
-	if (thread->maps) {
-		maps__put(thread->maps);
-		thread->maps = NULL;
+	if (thread->mg) {
+		map_groups__put(thread->mg);
+		thread->mg = NULL;
 	}
 	down_write(&thread->namespaces_lock);
 	list_for_each_entry_safe(namespaces, tmp_namespaces,
@@ -112,7 +110,6 @@ void thread__delete(struct thread *thread)
 
 	exit_rwsem(&thread->namespaces_lock);
 	exit_rwsem(&thread->comm_lock);
-	thread__free_stitch_list(thread);
 	free(thread);
 }
 
@@ -254,7 +251,7 @@ static int ____thread__set_comm(struct thread *thread, const char *str,
 		list_add(&new->list, &thread->comm_list);
 
 		if (exec)
-			unwind__flush_access(thread->maps);
+			unwind__flush_access(thread->mg);
 	}
 
 	thread->comm_set = true;
@@ -327,19 +324,19 @@ int thread__comm_len(struct thread *thread)
 size_t thread__fprintf(struct thread *thread, FILE *fp)
 {
 	return fprintf(fp, "Thread %d %s\n", thread->tid, thread__comm_str(thread)) +
-	       maps__fprintf(thread->maps, fp);
+	       map_groups__fprintf(thread->mg, fp);
 }
 
 int thread__insert_map(struct thread *thread, struct map *map)
 {
 	int ret;
 
-	ret = unwind__prepare_access(thread->maps, map, NULL);
+	ret = unwind__prepare_access(thread->mg, map, NULL);
 	if (ret)
 		return ret;
 
-	maps__fixup_overlappings(thread->maps, map, stderr);
-	maps__insert(thread->maps, map);
+	map_groups__fixup_overlappings(thread->mg, map, stderr);
+	map_groups__insert(thread->mg, map);
 
 	return 0;
 }
@@ -348,13 +345,13 @@ static int __thread__prepare_access(struct thread *thread)
 {
 	bool initialized = false;
 	int err = 0;
-	struct maps *maps = thread->maps;
+	struct maps *maps = &thread->mg->maps;
 	struct map *map;
 
 	down_read(&maps->lock);
 
-	maps__for_each_entry(maps, map) {
-		err = unwind__prepare_access(thread->maps, map, &initialized);
+	for (map = maps__first(maps); map; map = map__next(map)) {
+		err = unwind__prepare_access(thread->mg, map, &initialized);
 		if (err || initialized)
 			break;
 	}
@@ -374,19 +371,21 @@ static int thread__prepare_access(struct thread *thread)
 	return err;
 }
 
-static int thread__clone_maps(struct thread *thread, struct thread *parent, bool do_maps_clone)
+static int thread__clone_map_groups(struct thread *thread,
+				    struct thread *parent,
+				    bool do_maps_clone)
 {
 	/* This is new thread, we share map groups for process. */
 	if (thread->pid_ == parent->pid_)
 		return thread__prepare_access(thread);
 
-	if (thread->maps == parent->maps) {
+	if (thread->mg == parent->mg) {
 		pr_debug("broken map groups on thread %d/%d parent %d/%d\n",
 			 thread->pid_, thread->tid, parent->pid_, parent->tid);
 		return 0;
 	}
 	/* But this one is new process, copy maps. */
-	return do_maps_clone ? maps__clone(thread, parent->maps) : 0;
+	return do_maps_clone ? map_groups__clone(thread, parent->mg) : 0;
 }
 
 int thread__fork(struct thread *thread, struct thread *parent, u64 timestamp, bool do_maps_clone)
@@ -402,7 +401,7 @@ int thread__fork(struct thread *thread, struct thread *parent, u64 timestamp, bo
 	}
 
 	thread->ppid = parent->tid;
-	return thread__clone_maps(thread, parent, do_maps_clone);
+	return thread__clone_map_groups(thread, parent, do_maps_clone);
 }
 
 void thread__find_cpumode_addr_location(struct thread *thread, u64 addr,
@@ -454,26 +453,4 @@ int thread__memcpy(struct thread *thread, struct machine *machine,
                *is64bit = al.map->dso->is_64_bit;
 
        return dso__data_read_offset(al.map->dso, machine, offset, buf, len);
-}
-
-void thread__free_stitch_list(struct thread *thread)
-{
-	struct lbr_stitch *lbr_stitch = thread->lbr_stitch;
-	struct stitch_list *pos, *tmp;
-
-	if (!lbr_stitch)
-		return;
-
-	list_for_each_entry_safe(pos, tmp, &lbr_stitch->lists, node) {
-		list_del_init(&pos->node);
-		free(pos);
-	}
-
-	list_for_each_entry_safe(pos, tmp, &lbr_stitch->free_lists, node) {
-		list_del_init(&pos->node);
-		free(pos);
-	}
-
-	zfree(&lbr_stitch->prev_lbr_cursor);
-	zfree(&thread->lbr_stitch);
 }
