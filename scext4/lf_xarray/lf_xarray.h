@@ -17,6 +17,7 @@
 #include <linux/rcupdate.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 
 #include <linux/xarray.h>
 
@@ -1115,6 +1116,11 @@ struct lf_xa_node {
 	};
 };
 
+struct node_trace_entry {
+	struct xa_node *node;
+	struct list_head list;
+};
+
 void lf_xa_dump(const struct xarray *);
 void lf_xa_dump_node(const struct xa_node *);
 
@@ -1237,7 +1243,6 @@ static inline bool lf_xa_is_sibling(const void *entry)
 }
 
 #define LF_XA_RETRY_ENTRY		lf_xa_mk_internal(256)
-#define LF_XA_NODE_GC_ENTRY		lf_xa_mk_internal(258)
 
 /**
  * lf_xa_is_retry() - Is the entry a retry entry?
@@ -1248,17 +1253,6 @@ static inline bool lf_xa_is_sibling(const void *entry)
 static inline bool lf_xa_is_retry(const void *entry)
 {
 	return unlikely(entry == LF_XA_RETRY_ENTRY);
-}
-
-/**
- * lf_xa_node_is_gc() - Is this entry previously a node to be deleted?
- * @entry: Entry retriedved from the lf-XArray
- *
- * Return: %true if the entry is previously a node to be deleted?
- */
-static inline bool lf_xa_node_is_gc(const void *entry)
-{
-	return unlikely(entry == LF_XA_NODE_GC_ENTRY);
 }
 
 /**
@@ -1344,7 +1338,8 @@ struct lf_xa_state {
  * Declare and initialise an xa_state on the stack.
  */
 #define LF_XA_STATE(name, array, index)				\
-	struct xa_state name = __LF_XA_STATE(array, index, 0, 0)
+	struct xa_state name = __LF_XA_STATE(array, index, 0, 0);\
+	INIT_LIST_HEAD(&(name).node_trace)
 
 /**
  * LF_XA_STATE_ORDER() - Declare an XArray operation state.
@@ -1361,7 +1356,8 @@ struct lf_xa_state {
 	struct xa_state name = __LF_XA_STATE(array,		\
 			(index >> order) << order,		\
 			order - (order % LF_XA_CHUNK_SHIFT),	\
-			(1U << (order % LF_XA_CHUNK_SHIFT)) - 1)
+			(1U << (order % LF_XA_CHUNK_SHIFT)) - 1);\
+	INIT_LIST_HEAD(&(name).node_trace)
 
 #define lf_xas_marked(xas, mark)	lf_xa_marked((xas)->xa, (mark))
 #define lf_xas_trylock(xas)		lf_xa_trylock((xas)->xa)
@@ -1392,10 +1388,9 @@ static inline void lf_xa_put_node(struct xa_node *node)
 static inline bool lf_xas_not_node(struct xa_node *node);
 
 /* Private */
-static inline struct xa_node *lf_xa_get_node(struct xa_node *node)
+static inline struct xa_node *lf_xa_get_node(struct xa_state *xas, struct xa_node *node)
 {
 	if (lf_xas_not_node(node))
-		//return LF_XAS_RESTART;
 		return node;
 
 	//if (node->refcnt > 100) {
@@ -1407,11 +1402,20 @@ static inline struct xa_node *lf_xa_get_node(struct xa_node *node)
 	// since parent slot is set to be LF_XA_RETRY_ENTRY, it is okay to increase this refcnt if thread already have node pointer
 	
 	__sync_fetch_and_add(&node->refcnt, 1);
-	if (__sync_fetch_and_add(&node->gc_flag, 0)) {
-		lf_xa_put_node(node);
-		return LF_XAS_RESTART;
-	}
-	return node;
+	//if (__sync_fetch_and_add(&node->gc_flag, 0)) {
+	//	lf_xa_put_node(node);
+	//	return LF_XAS_RESTART;
+	//}
+	struct node_trace_entry *entry = (struct node_trace_entry *)kmalloc(sizeof(struct node_trace_entry), GFP_KERNEL);
+	LF_XA_NODE_BUG_ON(node, !entry);
+	entry->node = node;
+	INIT_LIST_HEAD(&entry->list);
+	list_add(&entry->list, &xas->node_trace);
+	
+	//pr_cont("(%s:%d) ", __func__, __LINE__);
+	//lf_xa_dump_node(node);
+
+	return entry->node;
 }
 
 static inline void lock_node(struct xa_node *node)
@@ -1492,7 +1496,7 @@ static inline bool lf_xas_not_node(struct xa_node *node)
 	return ((unsigned long)node & 3) || !node;
 }
 
-#if 0
+#if 1
 /* Set xas.xa_node and increase refcnt, after decreasing old xa_node refcnt */
 static inline void lf_xas_set_xa_node(struct xa_state *xas, struct xa_node *node)
 {
@@ -1515,6 +1519,19 @@ static inline void lf_xas_set_xa_node(struct xa_state *xas, struct xa_node *node
 }
 #endif
 
+static inline void lf_xas_rewind_refcnt(struct xa_state *xas)
+{
+	struct node_trace_entry *iter, *temp;
+	list_for_each_entry_safe(iter, temp, &xas->node_trace, list) {
+		list_del(&iter->list);
+		struct xa_node *node = iter->node;
+		int refcnt = __sync_fetch_and_sub(&node->refcnt, 1);
+		//pr_cont("(%s:%d) ", __func__, __LINE__);
+		//lf_xa_dump_node(node);
+		kfree(iter);
+	}
+}
+
 static inline void lf_xas_reset(struct xa_state *xas);
 
 /* Decreases old xa_node refcnt */
@@ -1522,6 +1539,7 @@ static inline void lf_xas_clear_xa_node(struct xa_state *xas)
 {
 	//if (lf_xas_is_node(xas))
 	//	lf_xa_put_node(xas->xa_node);
+	//lf_xas_rewind_refcnt(xas);
 	lf_xas_reset(xas);
 }
 

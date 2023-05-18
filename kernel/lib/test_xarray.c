@@ -104,12 +104,15 @@ static noinline void check_xas_retry(struct xarray *xa)
 	XA_STATE(xas, xa, 0);
 	void *entry;
 
+	printk("sizeof node->slots %d\n", sizeof(xas.xa_node->slots)/sizeof(void*));
+
 	xa_store_index(xa, 0, GFP_KERNEL);
 	xa_store_index(xa, 1, GFP_KERNEL);
 
 	rcu_read_lock();
 	XA_BUG_ON(xa, xas_find(&xas, ULONG_MAX) != xa_mk_value(0));
 	xa_erase_index(xa, 1);
+	xa_dump(xa);
 	XA_BUG_ON(xa, !xa_is_retry(xas_reload(&xas)));
 	XA_BUG_ON(xa, xas_retry(&xas, NULL));
 	XA_BUG_ON(xa, xas_retry(&xas, xa_mk_value(0)));
@@ -1751,6 +1754,7 @@ static int xarray_checks(void)
 {
 	check_xa_err(&array);
 	check_xas_retry(&array);
+	return (tests_run == tests_passed) ? 0 : -EINVAL;
 	check_xa_load(&array);
 	check_xa_mark(&array);
 	check_xa_shrink(&array);

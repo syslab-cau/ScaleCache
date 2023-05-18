@@ -383,7 +383,8 @@ void workingset_update_node(struct xa_node *node)
 	 */
 	VM_WARN_ON_ONCE(!irqs_disabled());  /* For __inc_lruvec_page_state */
 
-	if (lf_xa_get_node(node) == LF_XAS_RESTART)
+	//node = lf_xa_get_node(node);
+	if (__sync_fetch_and_add(&node->gc_flag, 0))
 		return;
 
 	if (node->count && node->count == node->nr_values) {
@@ -397,7 +398,7 @@ void workingset_update_node(struct xa_node *node)
 			__dec_lruvec_slab_state(node, WORKINGSET_NODES);
 		}
 	}
-	lf_xa_put_node(node);
+	//lf_xa_put_node(node);
 }
 
 void *lf_xas_store(struct xa_state *xas, void *entry);
@@ -427,8 +428,8 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 	mapping = container_of(node->array, struct address_space, i_pages);
 
 	/* Coming from the list, invert the lock order */
-	if (!xa_trylock(&mapping->i_pages) || 
-			(node = lf_xa_get_node(node)) == LF_XAS_RESTART) {
+	if (!xa_trylock(&mapping->i_pages)) {//|| 
+		//	(node = lf_xa_get_node(node)) == LF_XAS_RESTART) {
 		spin_unlock_irq(lru_lock);
 		ret = LRU_RETRY;
 		goto out;
