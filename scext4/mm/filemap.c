@@ -1544,7 +1544,7 @@ struct page *scext4_find_get_entry(struct address_space *mapping, pgoff_t offset
 	//rcu_read_lock();
 repeat:
 	lf_xas_reset(&xas);
-	page = lf_xas_load(&xas);
+	page = lf_xas_load(&xas, true);
 	if (lf_xas_retry(&xas, page))
 		goto repeat;
 	/*
@@ -1882,7 +1882,7 @@ unsigned scext4_find_get_pages_contig(struct address_space *mapping, pgoff_t ind
 		return 0;
 
 	rcu_read_lock();
-	for (page = lf_xas_load(&xas); page; page = lf_xas_next(&xas)) {
+	for (page = lf_xas_load(&xas, true); page; page = lf_xas_next(&xas)) {
 		if (lf_xas_retry(&xas, page))
 			continue;
 		/*

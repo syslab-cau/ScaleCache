@@ -39,7 +39,8 @@ static inline void __clear_shadow_entry(struct address_space *mapping,
 	LF_XA_STATE(xas, &mapping->i_pages, index);
 
 	lf_xas_set_update(&xas, workingset_update_node);
-	if (lf_xas_load(&xas) != entry) {
+	if (lf_xas_load(&xas, false) != entry) {
+		lf_xas_rewind_refcnt(&xas);
 		lf_xas_clear_xa_node(&xas);
 		return;
 	}
@@ -47,6 +48,7 @@ static inline void __clear_shadow_entry(struct address_space *mapping,
 	LF_XA_NODE_BUG_ON(xas.xa_node, __sync_fetch_and_add(&xas.xa_node->refcnt, 0) == 64);
 
 	lf_xas_store(&xas, NULL);
+	lf_xas_rewind_refcnt(&xas);
 	lf_xas_clear_xa_node(&xas);
 	spin_lock(&mapping->nr_lock);
 	mapping->nrexceptional--;

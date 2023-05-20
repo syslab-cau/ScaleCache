@@ -27,6 +27,7 @@
 
 #include "../lf_xarray/lf_xarray.h"
 
+#if 0
 #define ADD_CACHE_INFO(x, nr)	do { swap_cache_info.x += (nr); } while (0)
 
 extern struct {
@@ -35,6 +36,8 @@ extern struct {
 	unsigned long find_success;
 	unsigned long find_total;
 } swap_cache_info;
+#endif
+#define ADD_CACHE_INFO(x, nr)	do {  } while (0)
 
 /*
  * This must be called only on pages that have

@@ -1401,13 +1401,14 @@ static inline struct xa_node *lf_xa_get_node(struct xa_state *xas, struct xa_nod
 	//	return LF_XAS_RESTART;
 	// since parent slot is set to be LF_XA_RETRY_ENTRY, it is okay to increase this refcnt if thread already have node pointer
 	
+	BUG_ON((unsigned long long)node < 100);
 	__sync_fetch_and_add(&node->refcnt, 1);
 	//if (__sync_fetch_and_add(&node->gc_flag, 0)) {
 	//	lf_xa_put_node(node);
 	//	return LF_XAS_RESTART;
 	//}
+	
 	struct node_trace_entry *entry = (struct node_trace_entry *)kmalloc(sizeof(struct node_trace_entry), GFP_KERNEL);
-	LF_XA_NODE_BUG_ON(node, !entry);
 	entry->node = node;
 	INIT_LIST_HEAD(&entry->list);
 	list_add(&entry->list, &xas->node_trace);
@@ -1593,7 +1594,7 @@ static inline bool lf_xas_retry(struct xa_state *xas, const void *entry)
 	return true;
 }
 
-void *lf_xas_load(struct xa_state *);
+void *lf_xas_load(struct xa_state *, bool rewind);
 void *lf_xas_store(struct xa_state *, void *entry);
 void *lf_xas_find(struct xa_state *, unsigned long max);
 void *lf_xas_find_conflict(struct xa_state *);
