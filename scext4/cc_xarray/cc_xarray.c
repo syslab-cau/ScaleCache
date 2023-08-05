@@ -257,7 +257,7 @@ void *cc_xas_load(struct xa_state *xas, bool rewind)
 		//	printk("[@%px] pid: %d, node->shift: %u ->refcnt: %hu\n", node, current->pid, node->shift, refcnt);
 
 		if (node->refcnt > 60000) {
-			printk("[WARNING!!] [@%p] before get_node refcnt: %hu (%s:%d)\n", node, node->refcnt, __func__, __LINE__);
+		//	printk("[WARNING!!] [@%p] before get_node refcnt: %hu (%s:%d)\n", node, node->refcnt, __func__, __LINE__);
 			CC_XA_NODE_BUG_ON(node, 1);
 		}
 		
@@ -310,13 +310,13 @@ void *cc_xas_load_debug(struct xa_state *xas)
 		//	printk("[@%px] pid: %d, node->shift: %u ->refcnt: %hu\n", node, current->pid, node->shift, refcnt);
 
 		if (node->refcnt > 60000) {
-			printk("[WARNING!!] [@%p] before get_node refcnt: %hu (%s:%d)\n", node, node->refcnt, __func__, __LINE__);
+		//	printk("[WARNING!!] [@%p] before get_node refcnt: %hu (%s:%d)\n", node, node->refcnt, __func__, __LINE__);
 			CC_XA_NODE_BUG_ON(node, 1);
 		}
 		
 		node = cc_xa_get_node(xas, cc_xa_to_node(entry));
 		if (__sync_fetch_and_add(&node->gc_flag, 0)) {
-			printk("node logically deleted! returning null\n");
+		//	printk("node logically deleted! returning null\n");
 			return NULL;
 		}
 		cc_xa_dump_node(node);
@@ -623,7 +623,7 @@ static void cc_xas_delete_node(struct xa_state *xas)
 
 		/* if there are other threads in the parent node */
 		if (__sync_fetch_and_add(&node->parent->refcnt, 0) > 1) {
-			printk("parent->refcnt %d\n", node->parent->refcnt);
+		//	printk("parent->refcnt %d\n", node->parent->refcnt);
 			CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->gc_flag, 1, 0));
 			cc_xas_set_xa_node(xas, node);
 			break;
@@ -631,7 +631,7 @@ static void cc_xas_delete_node(struct xa_state *xas)
 
 		/* if there are other threads in the node */
 		if (__sync_fetch_and_add(&node->refcnt, 0) > 1) {
-			printk("node->refcnt %d\n", node->refcnt);
+		//	printk("node->refcnt %d\n", node->refcnt);
 			CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->gc_flag, 1, 0));
 			cc_xas_set_xa_node(xas, node);
 			break;
@@ -728,7 +728,7 @@ static void cc_xas_free_nodes(struct xa_state *xas, struct xa_node *top)
 	//if (node == CC_XAS_RESTART)
 	//	return;
 
-	printk("%s\n", __func__);
+	//printk("%s\n", __func__);
 	
 
 	for (;;) {
@@ -791,7 +791,7 @@ static int cc_xas_expand(struct xa_state *xas, void *head)
 		//node = cc_xa_get_node(xas, cc_xa_to_node(head));
 		node = cc_xa_to_node(head);
 		if (node == CC_XAS_RESTART) {
-			printk("Root Node being destroyed!! Something went wrong!\n");
+		//	printk("Root Node being destroyed!! Something went wrong!\n");
 			return -1;
 		}
 		shift = node->shift + CC_XA_CHUNK_SHIFT;
@@ -904,7 +904,7 @@ static void *cc_xas_create(struct xa_state *xas, bool allow_root)
 		//xas->xa_node = NULL;
 		cc_xas_set_xa_node(xas, NULL);
 		if (!entry && cc_xa_zero_busy(xa)) {
-			printk("ZERO ENTRY!!\n");
+		//	printk("ZERO ENTRY!!\n");
 			entry = CC_XA_ZERO_ENTRY;
 		}
 		shift = cc_xas_expand(xas, entry);
@@ -946,7 +946,7 @@ static void *cc_xas_create(struct xa_state *xas, bool allow_root)
 			if (curr = __sync_val_compare_and_swap(
 					slot, NULL, cc_xa_mk_node(node)) != NULL) {
 				//cc_xa_put_node(node);	// TODO: delete from the list!!
-				printk("CAS failed! (%s:%d)\n", __func__, __LINE__);
+			//	printk("CAS failed! (%s:%d)\n", __func__, __LINE__);
 
 				struct node_trace_entry *entry = container_of(&node, struct node_trace_entry, node);
 				BUG_ON((unsigned long) entry < 100);
@@ -979,12 +979,12 @@ static void *cc_xas_create(struct xa_state *xas, bool allow_root)
 					BUG_ON((unsigned long) parent < 100);
 					__sync_add_and_fetch(&parent->count, 1);
 				}
-				printk("reusing node[@%px]... parent @%px (%s:%d)\n", node, parent, __func__, __LINE__);
+			//	printk("reusing node[@%px]... parent @%px (%s:%d)\n", node, parent, __func__, __LINE__);
 				goto descend;
 			}
 		} else {	// node is leaf node and entry is pointer or value
 			//node = cc_xa_get_node(node);
-			printk(" node is leaf node and entry is pointer or value\n");
+		//	printk(" node is leaf node and entry is pointer or value\n");
 			break;
 		}
 descend:
@@ -1025,7 +1025,7 @@ void cc_xas_create_range(struct xa_state *xas)
 	xas->xa_shift = 0;
 	xas->xa_sibs = 0;
 
-	printk("%s\n", __func__);
+	//printk("%s\n", __func__);
 
 	for (;;) {
 		cc_xas_create(xas, true);
@@ -1089,8 +1089,8 @@ static void update_node(struct xa_state *xas, struct xa_node *node,
 	 *
 	 */
 	
-	 if(node_count < 0)
-	 	printk("%s, node_count: %d is minus\n", __func__, node_count);
+	 //if(node_count < 0)
+	 //	printk("%s, node_count: %d is minus\n", __func__, node_count);
 	 if(node_count <= 0 && count < 0)
 	 	cc_xas_delete_node(xas);
 
@@ -1147,13 +1147,13 @@ void *cc_xas_store(struct xa_state *xas, void *entry)
 	}
 
 	if (cc_xas_invalid(xas)){
-		printk("xas invalid! (%s:%d)\n", __func__, __LINE__);
+	//	printk("xas invalid! (%s:%d)\n", __func__, __LINE__);
 		return first;
 	}
 
 	if (!first && !cc_xa_is_value(first)) {		// first is page
 		if (!entry && !cc_xa_is_value(entry)) {	// entry is page
-			printk("Insert & Insert!");
+	//		printk("Insert & Insert!");
 		
 		}
 	}
@@ -1194,7 +1194,7 @@ void *cc_xas_store(struct xa_state *xas, void *entry)
 	/*	
 		while (!__sync_bool_compare_and_swap(slot, temp, entry)) {
 			if(test == 1){
-				printk("%s, test: %d\n", __func__, test);	
+		//		printk("%s, test: %d\n", __func__, test);	
 			}
 
 			if (node)
@@ -1206,7 +1206,7 @@ void *cc_xas_store(struct xa_state *xas, void *entry)
 			// entry: page
 			//if (!entry && !cc_xa_is_value(entry)) {	// page or NULL
 				BUG();
-				printk("%s, test: %d\n", __func__, test);	
+			//	printk("%s, test: %d\n", __func__, test);	
 				cc_xas_set_err(xas, -EEXIST);
 				return curr;
 			//}
@@ -1219,8 +1219,8 @@ void *cc_xas_store(struct xa_state *xas, void *entry)
 
 		if (cc_xa_is_node(next) && (!node || node->shift)) { // coming from scan_shadow_nodes()
 			
-			if (cc_xa_to_node(next)->shift)
-				printk("Isolated node was not Leaf Node!!");
+			//if (cc_xa_to_node(next)->shift)
+			//	printk("Isolated node was not Leaf Node!!");
 
 			// TODO: Modify into lock-free version!!
 			cc_xas_free_nodes(xas, cc_xa_to_node(next));
@@ -1851,7 +1851,7 @@ void *cc_xas_find_conflict(struct xa_state *xas)
 				//wait for other thread	
 			}
 			if (__sync_fetch_and_add(&node->del, 0)) {
-				printk("node logically deleted! returning null\n");
+			//	printk("node logically deleted! returning null\n");
 				return NULL;
 			}
 			curr = cc_xas_descend(xas, node);
