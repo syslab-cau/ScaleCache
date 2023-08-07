@@ -647,7 +647,7 @@ static void cc_xas_delete_node(struct xa_state *xas)
 		cc_xas_set_xa_node(xas, parent);
 		xas->xa_offset = node->offset;
 	
-		pr_cont("deleting node[@%px]... count %u parent @%px\n", node, count, parent);
+		//pr_cont("deleting node[@%px]... count %u parent @%px\n", node, count, parent);
 		//xa_node_free(node);
 		CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->del, 0, 1));
 
