@@ -50,9 +50,9 @@ static inline void __clear_shadow_entry(struct address_space *mapping,
 	cc_xas_store(&xas, NULL);
 	cc_xas_rewind_refcnt(&xas);
 	cc_xas_clear_xa_node(&xas);
-	spin_lock(&mapping->nr_lock);
+	spin_lock_irq(&mapping->nr_lock);
 	mapping->nrexceptional--;
-	spin_unlock(&mapping->nr_lock);
+	spin_unlock_irq(&mapping->nr_lock);
 }
 
 static void clear_shadow_entry(struct address_space *mapping, pgoff_t index,
@@ -553,9 +553,9 @@ void scext4_truncate_inode_pages_final(struct address_space *mapping)
 		 * completed before starting the final truncate.
 		 */
 		xa_lock_irq(&mapping->i_pages);
-		spin_lock(&mapping->nr_lock);
+		spin_lock_irq(&mapping->nr_lock);
 		xa_unlock_irq(&mapping->i_pages);
-		spin_unlock(&mapping->nr_lock);
+		spin_unlock_irq(&mapping->nr_lock);
 	}
 
 	/*

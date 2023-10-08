@@ -449,11 +449,11 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 		goto out_invalid;
 	if (WARN_ON_ONCE(node->count != node->nr_values))
 		goto out_invalid;
-	spin_lock(&mapping->nr_lock);
+	spin_lock_irq(&mapping->nr_lock);
 	mapping->nrexceptional -= __sync_fetch_and_add(&node->nr_values, 0);
-	spin_unlock(&mapping->nr_lock);
+	spin_unlock_irq(&mapping->nr_lock);
 	//xas.xa_node = xa_parent_locked(&mapping->i_pages, node);
-	cc_xas_set_xa_node(&xas, xa_parent_locked(&mapping->i_pages, node));
+	cc_xas_set_xa_node(&xas, cc_xa_parent_locked(&mapping->i_pages, node));
 	xas.xa_offset = node->offset;
 	xas.xa_shift = node->shift + XA_CHUNK_SHIFT;
 	cc_xas_set_update(&xas, workingset_update_node);

@@ -3992,8 +3992,8 @@ static const struct address_space_operations scext4_aops = {
 	.migratepage		= buffer_migrate_page,
 	.is_partially_uptodate  = block_is_partially_uptodate,
 	.error_remove_page	= scext4_generic_error_remove_page,
-	.custom_pagecache_get_page = scext4_pagecache_get_page,
-	.custom_find_get_entries = scext4_find_get_entries,
+	//.custom_pagecache_get_page = scext4_pagecache_get_page,
+	//.custom_find_get_entries = scext4_find_get_entries,
 };
 
 static const struct address_space_operations scext4_journalled_aops = {
@@ -4010,8 +4010,8 @@ static const struct address_space_operations scext4_journalled_aops = {
 	.direct_IO		= scext4_direct_IO,
 	.is_partially_uptodate  = block_is_partially_uptodate,
 	.error_remove_page	= scext4_generic_error_remove_page,
-	.custom_pagecache_get_page = scext4_pagecache_get_page,
-	.custom_find_get_entries = scext4_find_get_entries,
+	//.custom_pagecache_get_page = scext4_pagecache_get_page,
+	//.custom_find_get_entries = scext4_find_get_entries,
 };
 
 static const struct address_space_operations scext4_da_aops = {
@@ -4029,8 +4029,8 @@ static const struct address_space_operations scext4_da_aops = {
 	.migratepage		= buffer_migrate_page,
 	.is_partially_uptodate  = block_is_partially_uptodate,
 	.error_remove_page	= scext4_generic_error_remove_page,
-	.custom_pagecache_get_page = scext4_pagecache_get_page,
-	.custom_find_get_entries = scext4_find_get_entries,
+	//.custom_pagecache_get_page = scext4_pagecache_get_page,
+	//.custom_find_get_entries = scext4_find_get_entries,
 };
 
 static const struct address_space_operations scext4_dax_aops = {
@@ -4039,8 +4039,8 @@ static const struct address_space_operations scext4_dax_aops = {
 	.set_page_dirty		= noop_set_page_dirty,
 	.bmap			= scext4_bmap,
 	.invalidatepage		= noop_invalidatepage,
-	.custom_pagecache_get_page = scext4_pagecache_get_page,
-	.custom_find_get_entries = scext4_find_get_entries,
+	//.custom_pagecache_get_page = scext4_pagecache_get_page,
+	//.custom_find_get_entries = scext4_find_get_entries,
 };
 
 void scext4_set_aops(struct inode *inode)
@@ -5536,6 +5536,9 @@ int scext4_write_inode(struct inode *inode, struct writeback_control *wbc)
 	return err;
 }
 
+extern inline struct page *scext4_find_lock_page(struct address_space *mapping,
+					pgoff_t offset);
+
 /*
  * In data=journal mode scext4_journalled_invalidatepage() may fail to invalidate
  * buffers that are attached to a page stradding i_size and are undergoing
@@ -5562,7 +5565,7 @@ static void scext4_wait_for_tail_page_commit(struct inode *inode)
 	if (!offset || offset > (PAGE_SIZE - i_blocksize(inode)))
 		return;
 	while (1) {
-		page = find_lock_page(inode->i_mapping,
+		page = scext4_find_lock_page(inode->i_mapping,
 				      inode->i_size >> PAGE_SHIFT);
 		if (!page)
 			return;

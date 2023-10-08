@@ -147,7 +147,7 @@ static void page_cache_delete(struct address_space *mapping,
 	/* Leave page->index set: truncation lookup relies upon it */
 
 	smp_mb();
-	spin_lock(&mapping->nr_lock);
+	spin_lock_irq(&mapping->nr_lock);
 	if (shadow) {
 		mapping->nrexceptional += nr;
 		/*
@@ -160,7 +160,7 @@ static void page_cache_delete(struct address_space *mapping,
 
 	}
 	mapping->nrpages -= nr;
-	spin_unlock(&mapping->nr_lock);
+	spin_unlock_irq(&mapping->nr_lock);
 
 	//if (xas.xa_node->refcnt != 0)
 	//	printk("xas->xa_node->refcnt is not cleared!!\n");
@@ -352,9 +352,9 @@ static void page_cache_delete_batch(struct address_space *mapping,
 	}
 	cc_xas_clear_xa_node(&xas);
 	
-	spin_lock(&mapping->nr_lock);
+	spin_lock_irq(&mapping->nr_lock);
 	mapping->nrpages -= total_pages;
-	spin_unlock(&mapping->nr_lock);
+	spin_unlock_irq(&mapping->nr_lock);
 }
 
 void scext4_delete_from_page_cache_batch(struct address_space *mapping,
@@ -962,11 +962,11 @@ noinline int __scext4_add_to_page_cache_locked_optimized(struct page *page,
 		//cc_xas_clear_xa_node(&xas);
 		//smp_mb();
 
-		spin_lock(&mapping->nr_lock);
+		spin_lock_irq(&mapping->nr_lock);
 		if (old)
 			mapping->nrexceptional--;
 		mapping->nrpages++;
-		spin_unlock(&mapping->nr_lock);
+		spin_unlock_irq(&mapping->nr_lock);
 
 		/* hugetlb pages do not participate in page cache accounting */
 		if (!huge)
@@ -2026,7 +2026,8 @@ static inline struct page *scext4_find_get_page(struct address_space *mapping,
 	return scext4_pagecache_get_page(mapping, offset, 0, 0);
 }
 
-static inline struct page *scext4_find_get_page_flags(struct address_space *mapping,
+//static inline struct page *scext4_find_get_page_flags(struct address_space *mapping,
+inline struct page *scext4_find_get_page_flags(struct address_space *mapping,
 					pgoff_t offset, int fgp_flags)
 {
 	return scext4_pagecache_get_page(mapping, offset, fgp_flags, 0);
@@ -2045,7 +2046,8 @@ static inline struct page *scext4_find_get_page_flags(struct address_space *mapp
  *
  * find_lock_page() may sleep.
  */
-static inline struct page *scext4_find_lock_page(struct address_space *mapping,
+//static inline struct page *scext4_find_lock_page(struct address_space *mapping,
+inline struct page *scext4_find_lock_page(struct address_space *mapping,
 					pgoff_t offset)
 {
 	return scext4_pagecache_get_page(mapping, offset, FGP_LOCK, 0);
@@ -2070,7 +2072,8 @@ static inline struct page *scext4_find_lock_page(struct address_space *mapping,
  * find_or_create_page() may sleep, even if @gfp_flags specifies an
  * atomic allocation!
  */
-static inline struct page *scext4_find_or_create_page(struct address_space *mapping,
+//static inline struct page *scext4_find_or_create_page(struct address_space *mapping,
+inline struct page *scext4_find_or_create_page(struct address_space *mapping,
 					pgoff_t offset, gfp_t gfp_mask)
 {
 	return scext4_pagecache_get_page(mapping, offset,
