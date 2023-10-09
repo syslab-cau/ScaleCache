@@ -108,6 +108,9 @@ patches-*
 patches
 series
 
+# Auto-generated tag files
+tags
+
 # cscope files
 cscope.*
 ncscope.*

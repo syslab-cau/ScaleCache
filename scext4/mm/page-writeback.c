@@ -42,7 +42,7 @@
 
 #include "internal.h"
 
-#include "../lf_xarray/lf_xarray.h"
+#include "../cc_xarray/cc_xarray.h"
 
 /*
  * Sleep at most 200ms at a time in balance_dirty_pages().
@@ -1643,6 +1643,8 @@ static void scext4_balance_dirty_pages(struct bdi_writeback *wb,
 				m_bg_thresh = mdtc->bg_thresh;
 			}
 		}
+		//unsigned long total_dirty = dirty + m_dirty;
+		//printk("dirty pages: %lu\n", total_dirty);
 
 		/*
 		 * Throttle it only when the background writeback cannot
@@ -1773,6 +1775,7 @@ pause:
 		__set_current_state(TASK_KILLABLE);
 		wb->dirty_sleep = now;  // ziggy: do not know if this is needed
 
+
 		io_schedule_timeout(pause); 
 
 		//wb->dirty_sleep = now;  // ziggy: do not know if this is needed
@@ -1785,6 +1788,7 @@ pause:
         //
 
 		scext4_wb_do_writeback_modified(wb);
+		
 
 		current->dirty_paused_when = now + pause;
 		//current->dirty_paused_when = now;	
@@ -1963,8 +1967,6 @@ bool wb_over_bg_thresh(struct bdi_writeback *wb)
 	if (wb_stat(wb, WB_RECLAIMABLE) >
 	    wb_calc_thresh(gdtc->wb, gdtc->bg_thresh))
 		return true;
-	else
-		return false; //kiet add
 
 	if (mdtc) {
 		unsigned long filepages, headroom, writeback;
@@ -2122,24 +2124,24 @@ void __init page_writeback_init(void)
 void scext4_tag_pages_for_writeback(struct address_space *mapping,
 			     pgoff_t start, pgoff_t end)
 {
-	LF_XA_STATE(xas, &mapping->i_pages, start);
+	CC_XA_STATE(xas, &mapping->i_pages, start);
 	unsigned int tagged = 0;
 	void *page;
 
 	//TODO: Can we remove this lock? Is this lock unnecessary?
 	xas_lock_irq(&xas);
-	lf_xas_for_each_marked(&xas, page, end, PAGECACHE_TAG_DIRTY) {
-		lf_xas_set_mark(&xas, PAGECACHE_TAG_TOWRITE); // TODO: make this as lock-free!!
+	cc_xas_for_each_marked(&xas, page, end, PAGECACHE_TAG_DIRTY) {
+		cc_xas_set_mark(&xas, PAGECACHE_TAG_TOWRITE); // TODO: make this as lock-free!!
 		if (++tagged % XA_CHECK_SCHED)
 			continue;
 
-		lf_xas_pause(&xas);
+		cc_xas_pause(&xas);
 		xas_unlock_irq(&xas);
 		cond_resched();
 		xas_lock_irq(&xas);
 	}
 	xas_unlock_irq(&xas);
-	lf_xas_clear_xa_node(&xas);
+	cc_xas_clear_xa_node(&xas);
 }
 
 extern int write_one_page(struct page *page);
@@ -2233,7 +2235,7 @@ int test_clear_page_writeback(struct page *page)
 		xa_lock_irqsave(&mapping->i_pages, flags);
 		ret = TestClearPageWriteback(page);
 		if (ret) {
-			__lf_xa_clear_mark(&mapping->i_pages, page_index(page),
+			__cc_xa_clear_mark(&mapping->i_pages, page_index(page),
 						PAGECACHE_TAG_WRITEBACK);
 			if (bdi_cap_account_writeback(bdi)) {
 				struct bdi_writeback *wb = inode_to_wb(inode);

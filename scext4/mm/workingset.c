@@ -16,7 +16,7 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 
-#include "../lf_xarray/lf_xarray.h"
+#include "../cc_xarray/cc_xarray.h"
 
 /*
  *		Double CLOCK lists
@@ -383,7 +383,7 @@ void workingset_update_node(struct xa_node *node)
 	 */
 	VM_WARN_ON_ONCE(!irqs_disabled());  /* For __inc_lruvec_page_state */
 
-	//node = lf_xa_get_node(node);
+	//node = cc_xa_get_node(node);
 	if (__sync_fetch_and_add(&node->gc_flag, 0))
 		return;
 
@@ -398,10 +398,10 @@ void workingset_update_node(struct xa_node *node)
 			__dec_lruvec_slab_state(node, WORKINGSET_NODES);
 		}
 	}
-	//lf_xa_put_node(node);
+	//cc_xa_put_node(node);
 }
 
-void *lf_xas_store(struct xa_state *xas, void *entry);
+void *cc_xas_store(struct xa_state *xas, void *entry);
 
 static enum lru_status shadow_lru_isolate(struct list_head *item,
 					  struct list_lru_one *lru,
@@ -409,7 +409,7 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 					  void *arg) __must_hold(lru_lock)
 {
 	struct xa_node *node = container_of(item, struct xa_node, private_list);
-	LF_XA_STATE(xas, node->array, 0);
+	CC_XA_STATE(xas, node->array, 0);
 	struct address_space *mapping;
 	int ret;
 
@@ -429,7 +429,7 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 
 	/* Coming from the list, invert the lock order */
 	if (!xa_trylock(&mapping->i_pages)) {//|| 
-		//	(node = lf_xa_get_node(node)) == LF_XAS_RESTART) {
+		//	(node = cc_xa_get_node(node)) == CC_XAS_RESTART) {
 		spin_unlock_irq(lru_lock);
 		ret = LRU_RETRY;
 		goto out;
@@ -449,27 +449,27 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 		goto out_invalid;
 	if (WARN_ON_ONCE(node->count != node->nr_values))
 		goto out_invalid;
-	spin_lock(&mapping->nr_lock);
+	spin_lock_irq(&mapping->nr_lock);
 	mapping->nrexceptional -= __sync_fetch_and_add(&node->nr_values, 0);
-	spin_unlock(&mapping->nr_lock);
+	spin_unlock_irq(&mapping->nr_lock);
 	//xas.xa_node = xa_parent_locked(&mapping->i_pages, node);
-	lf_xas_set_xa_node(&xas, xa_parent_locked(&mapping->i_pages, node));
+	cc_xas_set_xa_node(&xas, cc_xa_parent_locked(&mapping->i_pages, node));
 	xas.xa_offset = node->offset;
 	xas.xa_shift = node->shift + XA_CHUNK_SHIFT;
-	lf_xas_set_update(&xas, workingset_update_node);
+	cc_xas_set_update(&xas, workingset_update_node);
 	/*
 	 * We could store a shadow entry here which was the minimum of the
 	 * shadow entries we were tracking ...
 	 */
-	lf_xas_store(&xas, NULL);
+	cc_xas_store(&xas, NULL);
 	__inc_lruvec_slab_state(node, WORKINGSET_NODERECLAIM);
 
 out_invalid:
-	lf_xa_put_node(node);
+	cc_xa_put_node(node);
 	xa_unlock_irq(&mapping->i_pages);
 	ret = LRU_REMOVED_RETRY;
 out:
-	lf_xas_clear_xa_node(&xas);
+	cc_xas_clear_xa_node(&xas);
 	cond_resched();
 	spin_lock_irq(lru_lock);
 	return ret;

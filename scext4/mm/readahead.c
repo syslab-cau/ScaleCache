@@ -25,7 +25,7 @@
 
 #include "internal.h"
 
-#include "../lf_xarray/lf_xarray.h"
+#include "../cc_xarray/cc_xarray.h"
 
 /*
  * Initialise a struct file's readahead state.  Assumes that the caller has
@@ -185,8 +185,8 @@ unsigned int __scext4_do_page_cache_readahead(struct address_space *mapping,
 		if (page_offset > end_index)
 			break;
 
-		page = lf_xa_load(&mapping->i_pages, page_offset);
-		if (page && !lf_xa_is_value(page)) {
+		page = cc_xa_load(&mapping->i_pages, page_offset);
+		if (page && !cc_xa_is_value(page)) {
 			/*
 			 * Page already present?  Kick off the current batch of
 			 * contiguous pages before continuing with the next

@@ -26,7 +26,7 @@
 #include <linux/rmap.h>
 #include "internal.h"
 
-#include "../lf_xarray/lf_xarray.h"
+#include "../cc_xarray/cc_xarray.h"
 
 /*
  * Regular page slots are stabilized by the page lock even without the tree
@@ -36,23 +36,23 @@
 static inline void __clear_shadow_entry(struct address_space *mapping,
 				pgoff_t index, void *entry)
 {
-	LF_XA_STATE(xas, &mapping->i_pages, index);
+	CC_XA_STATE(xas, &mapping->i_pages, index);
 
-	lf_xas_set_update(&xas, workingset_update_node);
-	if (lf_xas_load(&xas, false) != entry) {
-		lf_xas_rewind_refcnt(&xas);
-		lf_xas_clear_xa_node(&xas);
+	cc_xas_set_update(&xas, workingset_update_node);
+	if (cc_xas_load(&xas, false) != entry) {
+		cc_xas_rewind_refcnt(&xas);
+		cc_xas_clear_xa_node(&xas);
 		return;
 	}
 
-	LF_XA_NODE_BUG_ON(xas.xa_node, __sync_fetch_and_add(&xas.xa_node->refcnt, 0) == 64);
+	CC_XA_NODE_BUG_ON(xas.xa_node, __sync_fetch_and_add(&xas.xa_node->refcnt, 0) == 64);
 
-	lf_xas_store(&xas, NULL);
-	lf_xas_rewind_refcnt(&xas);
-	lf_xas_clear_xa_node(&xas);
-	spin_lock(&mapping->nr_lock);
+	cc_xas_store(&xas, NULL);
+	cc_xas_rewind_refcnt(&xas);
+	cc_xas_clear_xa_node(&xas);
+	spin_lock_irq(&mapping->nr_lock);
 	mapping->nrexceptional--;
-	spin_unlock(&mapping->nr_lock);
+	spin_unlock_irq(&mapping->nr_lock);
 }
 
 static void clear_shadow_entry(struct address_space *mapping, pgoff_t index,
@@ -80,7 +80,7 @@ static void truncate_exceptional_pvec_entries(struct address_space *mapping,
 		return;
 
 	for (j = 0; j < pagevec_count(pvec); j++)
-		if (lf_xa_is_value(pvec->pages[j]))
+		if (cc_xa_is_value(pvec->pages[j]))
 			break;
 
 	if (j == pagevec_count(pvec))
@@ -95,7 +95,7 @@ static void truncate_exceptional_pvec_entries(struct address_space *mapping,
 		struct page *page = pvec->pages[i];
 		pgoff_t index = indices[i];
 
-		if (!lf_xa_is_value(page)) {
+		if (!cc_xa_is_value(page)) {
 			pvec->pages[j++] = page;
 			continue;
 		}
@@ -381,7 +381,7 @@ void scext4_truncate_inode_pages_range(struct address_space *mapping,
 			if (index >= end)
 				break;
 
-			if (lf_xa_is_value(page))
+			if (cc_xa_is_value(page))
 				continue;
 
 			if (!trylock_page(page))
@@ -553,9 +553,9 @@ void scext4_truncate_inode_pages_final(struct address_space *mapping)
 		 * completed before starting the final truncate.
 		 */
 		xa_lock_irq(&mapping->i_pages);
-		spin_lock(&mapping->nr_lock);
+		spin_lock_irq(&mapping->nr_lock);
 		xa_unlock_irq(&mapping->i_pages);
-		spin_unlock(&mapping->nr_lock);
+		spin_unlock_irq(&mapping->nr_lock);
 	}
 
 	/*

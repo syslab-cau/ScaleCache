@@ -59,7 +59,7 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/scext4.h>
 
-#include "lf_xarray/lf_xarray.h"
+#include "cc_xarray/cc_xarray.h"
 
 static struct scext4_lazy_init *scext4_li_info;
 static struct mutex scext4_li_mtx;
@@ -1148,7 +1148,7 @@ static void scext4_destroy_inode(struct inode *inode)
 
 static void __address_space_init_once(struct address_space *mapping)
 {
-	lf_xa_init_flags(&mapping->i_pages, XA_FLAGS_LOCK_IRQ | XA_FLAGS_ACCOUNT);
+	cc_xa_init_flags(&mapping->i_pages, XA_FLAGS_LOCK_IRQ | XA_FLAGS_ACCOUNT);
 	init_rwsem(&mapping->i_mmap_rwsem);
 	INIT_LIST_HEAD(&mapping->private_list);
 	spin_lock_init(&mapping->private_lock);
@@ -4650,9 +4650,9 @@ no_journal:
 		}
 
 	//kiet change 
-	// err = scext4_register_li_request(sb, first_not_zeroed);
-	// if (err)
-	// 	goto failed_mount6;
+	err = scext4_register_li_request(sb, first_not_zeroed);
+	if (err)
+		goto failed_mount6;
 
 	err = scext4_register_sysfs(sb);
 	if (err)

@@ -526,9 +526,9 @@ retry:
 		dax_disassociate_entry(entry, mapping, false);
 		xas_store(xas, NULL);	/* undo the PMD join */
 		dax_wake_entry(xas, entry, true);
-		spin_lock(&mapping->nr_lock);
+		spin_lock_irq(&mapping->nr_lock);
 		mapping->nrexceptional--;
-		spin_unlock(&mapping->nr_lock);
+		spin_unlock_irq(&mapping->nr_lock);
 		entry = NULL;
 		xas_set(xas, index);
 	}
@@ -544,9 +544,9 @@ retry:
 		dax_lock_entry(xas, entry);
 		if (xas_error(xas))
 			goto out_unlock;
-		spin_lock(&mapping->nr_lock);
+		spin_lock_irq(&mapping->nr_lock);
 		mapping->nrexceptional++;
-		spin_unlock(&mapping->nr_lock);
+		spin_unlock_irq(&mapping->nr_lock);
 	}
 
 out_unlock:
@@ -649,9 +649,9 @@ static int __dax_invalidate_entry(struct address_space *mapping,
 		goto out;
 	dax_disassociate_entry(entry, mapping, trunc);
 	xas_store(&xas, NULL);
-	spin_lock(&mapping->nr_lock);
+	spin_lock_irq(&mapping->nr_lock);
 	mapping->nrexceptional--;
-	spin_unlock(&mapping->nr_lock);
+	spin_unlock_irq(&mapping->nr_lock);
 	ret = 1;
 out:
 	put_unlocked_entry(&xas, entry);

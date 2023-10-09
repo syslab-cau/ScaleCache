@@ -83,7 +83,7 @@ __scxfs_find_get_block_slow(struct block_device *bdev, sector_t block)
 	static DEFINE_RATELIMIT_STATE(last_warned, HZ, 1);
 	
 	index = block >> (PAGE_SHIFT - bd_inode->i_blkbits);
-	page = find_get_page_flags(bd_mapping, index, FGP_ACCESSED);
+	page = scext4_find_get_page_flags(bd_mapping, index, FGP_ACCESSED);
 	if (!page)
 		goto out;
 	

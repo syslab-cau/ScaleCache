@@ -42,6 +42,8 @@
 
 #include "internal.h"
 
+#include "../cc_xarray/cc_xarray.h"
+
 /*
  * Sleep at most 200ms at a time in balance_dirty_pages().
  */
@@ -1961,8 +1963,6 @@ bool wb_over_bg_thresh(struct bdi_writeback *wb)
 	if (wb_stat(wb, WB_RECLAIMABLE) >
 	    wb_calc_thresh(gdtc->wb, gdtc->bg_thresh))
 		return true;
-	else
-		return false; //kiet add
 
 	if (mdtc) {
 		unsigned long filepages, headroom, writeback;
@@ -2120,22 +2120,23 @@ void __init page_writeback_init(void)
 void scxfs_tag_pages_for_writeback(struct address_space *mapping,
 			     pgoff_t start, pgoff_t end)
 {
-	XA_STATE(xas, &mapping->i_pages, start);
+	CC_XA_STATE(xas, &mapping->i_pages, start);
 	unsigned int tagged = 0;
 	void *page;
 
 	xas_lock_irq(&xas);
-	xas_for_each_marked(&xas, page, end, PAGECACHE_TAG_DIRTY) {
-		xas_set_mark(&xas, PAGECACHE_TAG_TOWRITE);
+	cc_xas_for_each_marked(&xas, page, end, PAGECACHE_TAG_DIRTY) {
+		cc_xas_set_mark(&xas, PAGECACHE_TAG_TOWRITE);
 		if (++tagged % XA_CHECK_SCHED)
 			continue;
 
-		xas_pause(&xas);
+		cc_xas_pause(&xas);
 		xas_unlock_irq(&xas);
 		cond_resched();
 		xas_lock_irq(&xas);
 	}
 	xas_unlock_irq(&xas);
+	cc_xas_clear_xa_node(&xas);
 }
 
 extern int write_one_page(struct page *page);

@@ -514,6 +514,8 @@ void truncate_inode_pages_final(struct address_space *mapping)
 		 * completed before starting the final truncate.
 		 */
 		xa_lock_irq(&mapping->i_pages);
+		spin_lock_irq(&mapping->nr_lock);
+		spin_unlock_irq(&mapping->nr_lock);
 		xa_unlock_irq(&mapping->i_pages);
 	}
 

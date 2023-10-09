@@ -5536,6 +5536,9 @@ int scext4_write_inode(struct inode *inode, struct writeback_control *wbc)
 	return err;
 }
 
+extern inline struct page *scext4_find_lock_page(struct address_space *mapping,
+					pgoff_t offset);
+
 /*
  * In data=journal mode scext4_journalled_invalidatepage() may fail to invalidate
  * buffers that are attached to a page stradding i_size and are undergoing
@@ -5562,7 +5565,7 @@ static void scext4_wait_for_tail_page_commit(struct inode *inode)
 	if (!offset || offset > (PAGE_SIZE - i_blocksize(inode)))
 		return;
 	while (1) {
-		page = find_lock_page(inode->i_mapping,
+		page = scext4_find_lock_page(inode->i_mapping,
 				      inode->i_size >> PAGE_SHIFT);
 		if (!page)
 			return;

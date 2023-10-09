@@ -705,9 +705,8 @@ static long scext4_wb_writeback_optimized(struct bdi_writeback *wb,
 		if (list_empty(&wb->b_io))
 			queue_io(wb, work, dirtied_before);
 
-		if (work->for_background && !wb_over_bg_thresh(wb)){ //kiet add
+		if (work->for_background && !wb_over_bg_thresh(wb)) //kiet add
 			break;
-		}
 
 		if (work->sb)
 			progress = scext4_writeback_sb_inodes(work->sb, wb, work);
