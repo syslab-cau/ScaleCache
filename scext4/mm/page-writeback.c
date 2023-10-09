@@ -1643,6 +1643,8 @@ static void scext4_balance_dirty_pages(struct bdi_writeback *wb,
 				m_bg_thresh = mdtc->bg_thresh;
 			}
 		}
+		//unsigned long total_dirty = dirty + m_dirty;
+		//printk("dirty pages: %lu\n", total_dirty);
 
 		/*
 		 * Throttle it only when the background writeback cannot
@@ -1773,6 +1775,7 @@ pause:
 		__set_current_state(TASK_KILLABLE);
 		wb->dirty_sleep = now;  // ziggy: do not know if this is needed
 
+
 		io_schedule_timeout(pause); 
 
 		//wb->dirty_sleep = now;  // ziggy: do not know if this is needed
@@ -1785,6 +1788,7 @@ pause:
         //
 
 		scext4_wb_do_writeback_modified(wb);
+		
 
 		current->dirty_paused_when = now + pause;
 		//current->dirty_paused_when = now;	
@@ -1963,8 +1967,6 @@ bool wb_over_bg_thresh(struct bdi_writeback *wb)
 	if (wb_stat(wb, WB_RECLAIMABLE) >
 	    wb_calc_thresh(gdtc->wb, gdtc->bg_thresh))
 		return true;
-	else
-		return false;
 
 	if (mdtc) {
 		unsigned long filepages, headroom, writeback;

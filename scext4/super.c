@@ -4649,9 +4649,9 @@ no_journal:
 			goto failed_mount6;
 		}
 
-	// err = scext4_register_li_request(sb, first_not_zeroed);
-	// if (err)
-	// 	goto failed_mount6;
+	err = scext4_register_li_request(sb, first_not_zeroed);
+	if (err)
+		goto failed_mount6;
 
 	err = scext4_register_sysfs(sb);
 	if (err)
