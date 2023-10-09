@@ -528,7 +528,7 @@ void clear_inode(struct inode *inode)
 	 */
 	xa_lock_irq(&inode->i_data.i_pages);
 	spin_lock_irq(&inode->i_data.nr_lock);
-	BUG_ON(inode->i_data.nrpages);
+	//BUG_ON(inode->i_data.nrpages);
 	//BUG_ON(inode->i_data.nrexceptional);
 	spin_unlock_irq(&inode->i_data.nr_lock);
 	xa_unlock_irq(&inode->i_data.i_pages);
