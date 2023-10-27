@@ -465,7 +465,7 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 	__inc_lruvec_slab_state(node, WORKINGSET_NODERECLAIM);
 
 out_invalid:
-	cc_xa_put_node(node);
+	//cc_xa_put_node(node);
 	xa_unlock_irq(&mapping->i_pages);
 	ret = LRU_REMOVED_RETRY;
 out:
