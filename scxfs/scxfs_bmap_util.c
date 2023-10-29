@@ -842,8 +842,10 @@ scxfs_free_eofblocks(
 			scxfs_trans_cancel(tp);
 		} else {
 			error = scxfs_trans_commit(tp);
-			if (!error)
+			if (!error) {
 				scxfs_inode_clear_eofblocks_tag(ip);
+				cc_xa_garbage_collector(CC_XARRAY(&VFS_I(ip)->i_data.i_pages));
+			}
 		}
 
 		scxfs_iunlock(ip, SCXFS_ILOCK_EXCL);

@@ -2208,6 +2208,29 @@ struct page *alloc_pages_current(gfp_t gfp, unsigned order)
 }
 EXPORT_SYMBOL(alloc_pages_current);
 
+struct page *cc_alloc_pages_current(gfp_t gfp, unsigned order)
+{
+	struct mempolicy *pol = &default_policy;
+	struct page *page;
+
+	if (!in_interrupt() && !(gfp & __GFP_THISNODE))
+		pol = get_task_policy(current);
+
+	/*
+	 * No reference counting needed for current->mempolicy
+	 * nor system default_policy
+	 */
+	if (pol->mode == MPOL_INTERLEAVE)
+		page = alloc_page_interleave(gfp, order, interleave_nodes(pol));
+	else
+		page = __cc_alloc_pages_nodemask(gfp, order,
+				policy_node(gfp, pol, numa_node_id()),
+				policy_nodemask(gfp, pol));
+
+	return page;
+}
+EXPORT_SYMBOL(cc_alloc_pages_current);
+
 int vma_dup_policy(struct vm_area_struct *src, struct vm_area_struct *dst)
 {
 	struct mempolicy *pol = mpol_dup(vma_policy(src));

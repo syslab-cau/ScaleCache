@@ -489,11 +489,20 @@ static inline void arch_alloc_page(struct page *page, int order) { }
 struct page *
 __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 							nodemask_t *nodemask);
+struct page *
+__cc_alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
+							nodemask_t *nodemask);
 
 static inline struct page *
 __alloc_pages(gfp_t gfp_mask, unsigned int order, int preferred_nid)
 {
 	return __alloc_pages_nodemask(gfp_mask, order, preferred_nid, NULL);
+}
+
+static inline struct page *
+__cc_alloc_pages(gfp_t gfp_mask, unsigned int order, int preferred_nid)
+{
+	return __cc_alloc_pages_nodemask(gfp_mask, order, preferred_nid, NULL);
 }
 
 /*
@@ -507,6 +516,15 @@ __alloc_pages_node(int nid, gfp_t gfp_mask, unsigned int order)
 	VM_WARN_ON((gfp_mask & __GFP_THISNODE) && !node_online(nid));
 
 	return __alloc_pages(gfp_mask, order, nid);
+}
+
+static inline struct page *
+__cc_alloc_pages_node(int nid, gfp_t gfp_mask, unsigned int order)
+{
+	VM_BUG_ON(nid < 0 || nid >= MAX_NUMNODES);
+	VM_WARN_ON((gfp_mask & __GFP_THISNODE) && !node_online(nid));
+
+	return __cc_alloc_pages(gfp_mask, order, nid);
 }
 
 /*
@@ -523,14 +541,31 @@ static inline struct page *alloc_pages_node(int nid, gfp_t gfp_mask,
 	return __alloc_pages_node(nid, gfp_mask, order);
 }
 
+static inline struct page *cc_alloc_pages_node(int nid, gfp_t gfp_mask,
+						unsigned int order)
+{
+	if (nid == NUMA_NO_NODE)
+		nid = numa_mem_id();
+
+	return __cc_alloc_pages_node(nid, gfp_mask, order);
+}
+
 #ifdef CONFIG_NUMA
 extern struct page *alloc_pages_current(gfp_t gfp_mask, unsigned order);
+extern struct page *cc_alloc_pages_current(gfp_t gfp_mask, unsigned order);
 
 static inline struct page *
 alloc_pages(gfp_t gfp_mask, unsigned int order)
 {
 	return alloc_pages_current(gfp_mask, order);
 }
+
+static inline struct page *
+cc_alloc_pages(gfp_t gfp_mask, unsigned int order)
+{
+	return cc_alloc_pages_current(gfp_mask, order);
+}
+
 extern struct page *alloc_pages_vma(gfp_t gfp_mask, int order,
 			struct vm_area_struct *vma, unsigned long addr,
 			int node, bool hugepage);
@@ -539,6 +574,8 @@ extern struct page *alloc_pages_vma(gfp_t gfp_mask, int order,
 #else
 #define alloc_pages(gfp_mask, order) \
 		alloc_pages_node(numa_node_id(), gfp_mask, order)
+#define cc_alloc_pages(gfp_mask, order) \
+		cc_alloc_pages_node(numa_node_id(), gfp_mask, order)
 #define alloc_pages_vma(gfp_mask, order, vma, addr, node, false)\
 	alloc_pages(gfp_mask, order)
 #define alloc_hugepage_vma(gfp_mask, vma, addr, order) \

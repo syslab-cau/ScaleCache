@@ -171,7 +171,6 @@ scxfs-y				+= $(addprefix mm/, \
 				   page-writeback.o \
 				   filemap.o \
 				   memcontrol.o \
-				   mempolicy.o \
 				   workingset.o \
 				   page_alloc.o \
 				   vmscan.o \
@@ -189,9 +188,6 @@ scxfs-y				+= $(addprefix fs/, \
 
 # ScaleCache WorkQueue
 scxfs-y				+= workqueue.o 
-
-# ScaleCache Concurrent XArray
-scxfs-y				+= cc_xarray/cc_xarray.o 
 
 
 KDIR := /lib/modules/$(shell uname -r)/build

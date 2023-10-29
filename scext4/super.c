@@ -6267,11 +6267,6 @@ extern void (*wb_workfn_in_scext4)(struct work_struct *work);
 extern void scext4_wb_workfn(struct work_struct *work);
 //
 
-extern struct page *(*pagecache_get_page_in_scext4)(struct address_space *mapping, pgoff_t offset,
-	int fgp_flags, gfp_t gfp_mask);
-extern struct page *scext4_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
-	int fgp_flags, gfp_t gfp_mask);
-
 static int __init scext4_init_fs(void)
 {
 	int i, err;
@@ -6324,7 +6319,6 @@ static int __init scext4_init_fs(void)
 
  	/* assign wb_workfn */
  	wb_workfn_in_scext4 = &scext4_wb_workfn;
-	pagecache_get_page_in_scext4 = &scext4_pagecache_get_page;
 
 	return 0;
 out:
@@ -6365,7 +6359,6 @@ static void __exit scext4_exit_fs(void)
 	scext4_exit_pending();
 
 	wb_workfn_in_scext4 = NULL;
-	pagecache_get_page_in_scext4 = NULL;
 }
 
 module_init(scext4_init_fs)

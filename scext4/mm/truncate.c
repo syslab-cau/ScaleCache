@@ -177,8 +177,6 @@ static void truncate_cleanup_page(struct page *page)
 	ClearPageMappedToDisk(page);
 }
 
-int scext4_remove_mapping(struct address_space *mapping, struct page *page);
-
 /*
  * This is for invalidate_mapping_pages().  That function can be called at
  * any time, and is not supposed to throw away dirty pages.  But pages can
@@ -198,7 +196,7 @@ invalidate_complete_page(struct address_space *mapping, struct page *page)
 	if (page_has_private(page) && !try_to_release_page(page, 0))
 		return 0;
 
-	ret = scext4_remove_mapping(mapping, page);
+	ret = cc_remove_mapping(mapping, page);
 
 	return ret;
 }
@@ -250,10 +248,6 @@ int invalidate_inode_page(struct page *page)
 	return invalidate_complete_page(mapping, page);
 }
 
-inline struct page *scext4_find_lock_page(struct address_space *mapping,
-					pgoff_t offset);
-extern struct page *scext4_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
-		int fgp_flags, gfp_t gfp_mask);
 unsigned cc_pagevec_lookup_entries(struct pagevec *pvec,
 				struct address_space *mapping,
 				pgoff_t start, unsigned nr_entries,
@@ -378,7 +372,7 @@ void scext4_truncate_inode_pages_range(struct address_space *mapping,
 		index++;
 	}
 	if (partial_start) {
-		struct page *page = scext4_find_lock_page(mapping, start - 1);
+		struct page *page = cc_find_lock_page(mapping, start - 1);
 		if (page) {
 			unsigned int top = PAGE_SIZE;
 			if (start > end) {
@@ -397,7 +391,7 @@ void scext4_truncate_inode_pages_range(struct address_space *mapping,
 		}
 	}
 	if (partial_end) {
-		struct page *page = scext4_find_lock_page(mapping, end);
+		struct page *page = cc_find_lock_page(mapping, end);
 		if (page) {
 			wait_on_page_writeback(page);
 			zero_user_segment(page, 0, partial_end);
@@ -898,7 +892,7 @@ void scext4_pagecache_isize_extended(struct inode *inode, loff_t from, loff_t to
 		return;
 
 	index = from >> PAGE_SHIFT;
-	page = scext4_find_lock_page(inode->i_mapping, index);
+	page = cc_find_lock_page(inode->i_mapping, index);
 	/* Page not cached? Nothing to do */
 	if (!page)
 		return;

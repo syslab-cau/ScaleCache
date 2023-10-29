@@ -59,9 +59,6 @@ __clear_page_buffers(struct page *page)
 	put_page(page);
 }
 
-extern inline struct page *scext4_find_get_page_flags(struct address_space *mapping,
-					pgoff_t offset, int fgp_flags);
-
 /*
  * Various filesystems appear to want __find_get_block to be non-blocking.
  * But it's the page lock which protects the buffers.  To get around this,
@@ -87,7 +84,7 @@ __scext4_find_get_block_slow(struct block_device *bdev, sector_t block)
 	int page_locked = 0;
 	
 	index = block >> (PAGE_SHIFT - bd_inode->i_blkbits);
-	page = scext4_find_get_page_flags(bd_mapping, index, FGP_ACCESSED);
+	page = cc_find_get_page_flags(bd_mapping, index, FGP_ACCESSED);
 	if (!page)
 		goto out;
 
@@ -253,11 +250,6 @@ scext4_init_page_buffers(struct page *page, struct block_device *bdev,
 }
 
 extern int scext4_try_to_free_buffers(struct page *page);
-extern inline struct page *scext4_find_lock_page(struct address_space *mapping,
-					pgoff_t offset, gfp_t gfp_mask);
-extern inline struct page *scext4_find_or_create_page(struct address_space *mapping,
-					pgoff_t offset, gfp_t gfp_mask);
-
 /*
  * Create the page-cache page that contains the requested block.
  *
@@ -284,7 +276,7 @@ scext4_grow_dev_page(struct block_device *bdev, sector_t block,
 	 */
 	gfp_mask |= __GFP_NOFAIL;
 
-	page = scext4_find_or_create_page(inode->i_mapping, index, gfp_mask);
+	page = cc_find_or_create_page(inode->i_mapping, index, gfp_mask);
 
 	BUG_ON(!PageLocked(page));
 

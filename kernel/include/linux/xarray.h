@@ -294,14 +294,12 @@ struct xarray {
 /* private: The rest of the data structure is not to be used directly. */
 	gfp_t		xa_flags;
 	void __rcu *	xa_head;
-	bool		is_custom;
 };
 
 #define XARRAY_INIT(name, flags) {				\
 	.xa_lock = __SPIN_LOCK_UNLOCKED(name.xa_lock),		\
 	.xa_flags = flags,					\
 	.xa_head = NULL,					\
-	.is_custom = false,					\
 }
 
 /**
@@ -378,7 +376,6 @@ static inline void xa_init_flags(struct xarray *xa, gfp_t flags)
 	spin_lock_init(&xa->xa_lock);
 	xa->xa_flags = flags;
 	xa->xa_head = NULL;
-	xa->is_custom = false;
 }
 
 /**
