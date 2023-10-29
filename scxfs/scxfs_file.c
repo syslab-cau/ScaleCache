@@ -238,7 +238,7 @@ scxfs_file_buffered_aio_read(
 	} else {
 		scxfs_ilock(ip, SCXFS_IOLOCK_SHARED);
 	}
-	ret = generic_file_read_iter(iocb, to);
+	ret = cc_generic_file_read_iter(iocb, to);
 	scxfs_iunlock(ip, SCXFS_IOLOCK_SHARED);
 
 	return ret;

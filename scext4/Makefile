@@ -10,7 +10,7 @@ scext4-y	:= balloc.o bitmap.o block_validity.o dir.o scext4_jbd3.o extents.o \
 		indirect.o inline.o inode.o ioctl.o mballoc.o migrate.o \
 		mmp.o move_extent.o namei.o page-io.o readpage.o resize.o \
 		super.o symlink.o sysfs.o xattr.o xattr_trusted.o xattr_user.o \
-		mm/page-writeback.o mm/filemap.o mm/memcontrol.o mm/mempolicy.o \
+		mm/page-writeback.o mm/filemap.o mm/memcontrol.o \
 		mm/workingset.o  mm/page_alloc.o mm/vmscan.o \
 		fs/buffer.o fs/fs-writeback.o workqueue.o \
 		mm/truncate.o mm/swap.o mm/readahead.o

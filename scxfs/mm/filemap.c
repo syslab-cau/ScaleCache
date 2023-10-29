@@ -55,8 +55,7 @@
 
 #include "../include/linux/gfp.h"
 
-// Kiet
-#include "../cc_xarray/cc_xarray.h"
+#include <linux/cc_xarray.h>
 
 /*
  * Shared mappings implemented 30.11.1994. It's not fully working yet,
@@ -120,49 +119,6 @@
  * ->i_mmap_rwsem
  *   ->tasklist_lock            (memory_failure, collect_procs_ao)
  */
-
-static void page_cache_delete(struct address_space *mapping,
-				   struct page *page, void *shadow)
-{
-	CC_XA_STATE(xas, &mapping->i_pages, page->index);
-	unsigned int nr = 1;
-
-	mapping_set_update(&xas, mapping);
-
-	/* hugetlb pages are represented by a single entry in the xarray */
-	if (!PageHuge(page)) {
-		xas_set_order(&xas, page->index, compound_order(page));
-		nr = compound_nr(page);
-	}
-
-	VM_BUG_ON_PAGE(!PageLocked(page), page);
-	VM_BUG_ON_PAGE(PageTail(page), page);
-	VM_BUG_ON_PAGE(nr != 1 && shadow, page);
-
-	cc_xas_store(&xas, shadow);
-	cc_xas_init_marks(&xas);
-
-	cc_xas_clear_xa_node(&xas);
-
-	page->mapping = NULL;
-	/* Leave page->index set: truncation lookup relies upon it */
-
-	smp_mb();
-	spin_lock(&mapping->nr_lock);
-	if (shadow) {
-		mapping->nrexceptional += nr;
-		/*
-		 * Make sure the nrexceptional update is committed before
-		 * the nrpages update so that final truncate racing
-		 * with reclaim does not see both counters 0 at the
-		 * same time and miss a shadow entry.
-		 */
-		smp_wmb();
-
-	}
-	mapping->nrpages -= nr;
-	spin_unlock(&mapping->nr_lock);
-}
 
 static void unaccount_page_cache_page(struct address_space *mapping,
 				      struct page *page)
@@ -234,21 +190,6 @@ static void unaccount_page_cache_page(struct address_space *mapping,
 		account_page_cleaned(page, mapping, inode_to_wb(mapping->host));
 }
 
-/*
- * Delete a page from the page cache and free it. Caller has to make
- * sure the page is locked and that nobody else uses it - or that usage
- * is safe.  The caller must hold the i_pages lock.
- */
-void __scxfs_delete_from_page_cache(struct page *page, void *shadow)
-{
-	struct address_space *mapping = page->mapping;
-
-	//trace_mm_filemap_delete_from_page_cache(page);
-
-	unaccount_page_cache_page(mapping, page);
-	page_cache_delete(mapping, page, shadow);
-}
-
 
 static void page_cache_free_page(struct address_space *mapping,
 				struct page *page)
@@ -267,6 +208,8 @@ static void page_cache_free_page(struct address_space *mapping,
 	}
 }
 
+void __cc_delete_from_page_cache(struct page *page, void *shadow);
+
 /**
  * delete_from_page_cache - delete page from page cache
  * @page: the page which the kernel is trying to remove from page cache
@@ -282,100 +225,12 @@ void scxfs_delete_from_page_cache(struct page *page)
 
 	BUG_ON(!PageLocked(page));
 	xa_lock_irqsave(&mapping->i_pages, flags);
-	__scxfs_delete_from_page_cache(page, NULL);
+	__cc_delete_from_page_cache(page, NULL);
 	xa_unlock_irqrestore(&mapping->i_pages, flags);
 
 	page_cache_free_page(mapping, page);
 }
 //EXPORT_SYMBOL(delete_from_page_cache);
-
-/*
- * page_cache_delete_batch - delete several pages from page cache
- * @mapping: the mapping to which pages belong
- * @pvec: pagevec with pages to delete
- *
- * The function walks over mapping->i_pages and removes pages passed in @pvec
- * from the mapping. The function expects @pvec to be sorted by page index
- * and is optimised for it to be dense.
- * It tolerates holes in @pvec (mapping entries at those indices are not
- * modified). The function expects only THP head pages to be present in the
- * @pvec.
- *
- * The function expects the i_pages lock to be held.
- */
-static void page_cache_delete_batch(struct address_space *mapping,
-			     struct pagevec *pvec)
-{
-	CC_XA_STATE(xas, &mapping->i_pages, pvec->pages[0]->index);
-	int total_pages = 0;
-	int i = 0;
-	struct page *page;
-
-	mapping_set_update(&xas, mapping);
-	cc_xas_for_each(&xas, page, ULONG_MAX) {
-		if (i >= pagevec_count(pvec))
-			break;
-
-		/* A swap/dax/shadow entry got inserted? Skip it. */
-		if (cc_xa_is_value(page))
-			continue;
-		/*
-		 * A page got inserted in our range? Skip it. We have our
-		 * pages locked so they are protected from being removed.
-		 * If we see a page whose index is higher than ours, it
-		 * means our page has been removed, which shouldn't be
-		 * possible because we're holding the PageLock.
-		 */
-		if (page != pvec->pages[i]) {
-			VM_BUG_ON_PAGE(page->index > pvec->pages[i]->index,
-					page);
-			continue;
-		}
-
-		WARN_ON_ONCE(!PageLocked(page));
-
-		if (page->index == xas.xa_index)
-			page->mapping = NULL;
-		/* Leave page->index set: truncation lookup relies on it */
-
-		/*
-		 * Move to the next page in the vector if this is a regular
-		 * page or the index is of the last sub-page of this compound
-		 * page.
-		 */
-		if (page->index + compound_nr(page) - 1 == xas.xa_index)
-			i++;
-		cc_xas_store(&xas, NULL);
-		total_pages++;
-	}
-	cc_xas_clear_xa_node(&xas);
-
-	spin_lock(&mapping->nr_lock);
-	mapping->nrpages -= total_pages;
-	spin_unlock(&mapping->nr_lock);
-}
-
-void scxfs_delete_from_page_cache_batch(struct address_space *mapping,
-				  struct pagevec *pvec)
-{
-	int i;
-	unsigned long flags;
-
-	if (!pagevec_count(pvec))
-		return;
-
-	xa_lock_irqsave(&mapping->i_pages, flags);
-	for (i = 0; i < pagevec_count(pvec); i++) {
-		//trace_mm_filemap_delete_from_page_cache(pvec->pages[i]);
-
-		unaccount_page_cache_page(mapping, pvec->pages[i]);
-	}
-	page_cache_delete_batch(mapping, pvec);
-	xa_unlock_irqrestore(&mapping->i_pages, flags);
-
-	for (i = 0; i < pagevec_count(pvec); i++)
-		page_cache_free_page(mapping, pvec->pages[i]);
-}
 
 int scxfs_filemap_check_errors(struct address_space *mapping)
 {
@@ -472,50 +327,6 @@ int scxfs_filemap_flush(struct address_space *mapping)
 	return __filemap_fdatawrite(mapping, WB_SYNC_NONE);
 }
 //EXPORT_SYMBOL(filemap_flush);
-
-/**
- * filemap_range_has_page - check if a page exists in range.
- * @mapping:           address space within which to check
- * @start_byte:        offset in bytes where the range starts
- * @end_byte:          offset in bytes where the range ends (inclusive)
- *
- * Find at least one page in the range supplied, usually used to check if
- * direct writing in this range will trigger a writeback.
- *
- * Return: %true if at least one page exists in the specified range,
- * %false otherwise.
- */
-bool scxfs_filemap_range_has_page(struct address_space *mapping,
-			   loff_t start_byte, loff_t end_byte)
-{
-	struct page *page;
-	CC_XA_STATE(xas, &mapping->i_pages, start_byte >> PAGE_SHIFT);
-	pgoff_t max = end_byte >> PAGE_SHIFT;
-
-	if (end_byte < start_byte)
-		return false;
-
-	rcu_read_lock();
-	for (;;) {
-		page = cc_xas_find(&xas, max);
-		if (cc_xas_retry(&xas, page))
-			continue;
-		/* Shadow entries don't count */
-		if (cc_xa_is_value(page))
-			continue;
-		/*
-		 * We don't need to try to pin this page; we're about to
-		 * release the RCU lock anyway.  It is enough to know that
-		 * there was a page here recently.
-		 */
-		break;
-	}
-	rcu_read_unlock();
-	cc_xas_clear_xa_node(&xas);
-
-	return page != NULL;
-}
-//EXPORT_SYMBOL(filemap_range_has_page);
 
 static void __filemap_fdatawait_range(struct address_space *mapping,
 				     loff_t start_byte, loff_t end_byte)
@@ -809,180 +620,10 @@ int scxfs_file_write_and_wait_range(struct file *file, loff_t lstart, loff_t len
 }
 //EXPORT_SYMBOL(file_write_and_wait_range);
 
-extern void scxfs_mem_cgroup_migrate(struct page *oldpage, struct page *newpage);
-
-/**
- * replace_page_cache_page - replace a pagecache page with a new one
- * @old:	page to be replaced
- * @new:	page to replace with
- * @gfp_mask:	allocation mode
- *
- * This function replaces a page in the pagecache with a new one.  On
- * success it acquires the pagecache reference for the new page and
- * drops it for the old page.  Both the old and new pages must be
- * locked.  This function does not add the new page to the LRU, the
- * caller must do that.
- *
- * The remove + add is atomic.  This function cannot fail.
- *
- * Return: %0
- */
-int scxfs_replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask)
-{
-	struct address_space *mapping = old->mapping;
-	void (*freepage)(struct page *) = mapping->a_ops->freepage;
-	pgoff_t offset = old->index;
-	CC_XA_STATE(xas, &mapping->i_pages, offset);
-	unsigned long flags;
-
-	VM_BUG_ON_PAGE(!PageLocked(old), old);
-	VM_BUG_ON_PAGE(!PageLocked(new), new);
-	VM_BUG_ON_PAGE(new->mapping, new);
-
-	get_page(new);
-	new->mapping = mapping;
-	new->index = offset;
-
-	//xas_lock_irqsave(&xas, flags);
-
-	preempt_disable();
-	local_irq_save(flags);
-	//xas_lock(&xas);
-
-	cc_xas_store(&xas, new);
-
-	old->mapping = NULL;
-	
-
-	/* hugetlb pages do not participate in page cache accounting. */
-	if (!PageHuge(old))
-		__dec_node_page_state(new, NR_FILE_PAGES);
-	if (!PageHuge(new))
-		__inc_node_page_state(new, NR_FILE_PAGES);
-	if (PageSwapBacked(old))
-		__dec_node_page_state(new, NR_SHMEM);
-	if (PageSwapBacked(new))
-		__inc_node_page_state(new, NR_SHMEM);
-
-	//xas_unlock_irqrestore(&xas, flags);
-
-	//xas_unlock(&xas);
-	preempt_enable();
-	local_irq_restore(flags);
-
-	scxfs_mem_cgroup_migrate(old, new);
-	if (freepage)
-		freepage(old);
-	put_page(old);
-
-	return 0;
-}
-//EXPORT_SYMBOL_GPL(replace_page_cache_page);
-
-extern int scxfs_mem_cgroup_try_charge(struct page *page, struct mm_struct *mm,
-			  gfp_t gfp_mask, struct mem_cgroup **memcgp,
-			  bool compound);
-extern void scxfs_mem_cgroup_cancel_charge(struct page *page, struct mem_cgroup *memcg,
-		bool compound);
-
-extern void scxfs_mem_cgroup_commit_charge(struct page *page, struct mem_cgroup *memcg,
-			      bool lrucare, bool compound);
-
-noinline int __scxfs_add_to_page_cache_locked_optimized(struct page *page,
+noinline int __cc_add_to_page_cache_locked(struct page *page,
 					struct address_space *mapping,
 					pgoff_t offset, gfp_t gfp_mask,
-					void **shadowp)
-{
-	CC_XA_STATE(xas, &mapping->i_pages, offset);
-	int huge = PageHuge(page);
-	struct mem_cgroup *memcg;
-	int error;
-
-	VM_BUG_ON_PAGE(!PageLocked(page), page);
-	VM_BUG_ON_PAGE(PageSwapBacked(page), page);
-	mapping_set_update(&xas, mapping);
-
-	if (!huge) {
-		error = scxfs_mem_cgroup_try_charge(page, current->mm,
-					      gfp_mask, &memcg, false);
-		if (error)
-			return error;
-	}
-
-	get_page(page);
-	page->mapping = mapping;
-	page->index = offset;
-	gfp_mask &= GFP_RECLAIM_MASK;
-
-	do {
-		unsigned int order = cc_xa_get_order(xas.xa, xas.xa_index);
-		void *entry, *old = NULL;
-
-		if (order > thp_order(page))
-			cc_xas_split_alloc(&xas, cc_xa_load(xas.xa, xas.xa_index),
-					order, gfp_mask);
-		local_irq_disable();
-		preempt_disable();
-		//xas_lock_irq(&xas);
-
-		cc_xas_for_each_conflict(&xas, entry) {
-			old = entry;
-			if (!cc_xa_is_value(entry)) {
-				cc_xas_set_err(&xas, -EEXIST);
-				goto unlock;
-			}
-		}
-
-		if (old) {
-			if (shadowp)
-				*shadowp = old;
-			/* entry may have been split before we acquired lock */
-			order = cc_xa_get_order(xas.xa, xas.xa_index);
-			if (order > thp_order(page)) {
-				cc_xas_split(&xas, old, order);
-				cc_xas_reset(&xas);
-			}
-		}
-
-		//xas_lock(&xas);
-		cc_xas_store(&xas, page);
-		smp_mb();
-		if (xas_error(&xas))
-			goto unlock;
-
-		//smp_mb();
-		
-		spin_lock(&mapping->nr_lock);
-		if (old)
-			mapping->nrexceptional--;
-		mapping->nrpages++;
-		spin_unlock(&mapping->nr_lock);
-
-		/* hugetlb pages do not participate in page cache accounting */
-		if (!huge)
-			__inc_node_page_state(page, NR_FILE_PAGES);
-unlock:
-		//xas_unlock_irq(&xas);
-		local_irq_enable();
-		preempt_enable();
-	} while (cc_xas_nomem(&xas, gfp_mask));
-
-	if (cc_xas_error(&xas))
-		goto error;
-
-	if (!huge)
-		scxfs_mem_cgroup_commit_charge(page, memcg, false, false);
-	//trace_mm_filemap_add_to_page_cache(page);
-	return 0;
-error:
-	page->mapping = NULL;
-	/* Leave page->index set: truncation relies upon it */
-	if (!huge)
-		scxfs_mem_cgroup_cancel_charge(page, memcg, false);
-	put_page(page);
-	return cc_xas_error(&xas);
-}
-ALLOW_ERROR_INJECTION(__scxfs_add_to_page_cache_locked_optimized, ERRNO);
+					void **shadowp);
 
 int scxfs_add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 				pgoff_t offset, gfp_t gfp_mask)
@@ -991,7 +632,7 @@ int scxfs_add_to_page_cache_lru(struct page *page, struct address_space *mapping
 	int ret;
 
 	__SetPageLocked(page);
-	ret = __scxfs_add_to_page_cache_locked_optimized(page, mapping, offset,
+	ret = __cc_add_to_page_cache_locked(page, mapping, offset,
 					 gfp_mask, &shadow);
 	if (unlikely(ret))
 		__ClearPageLocked(page);
@@ -1012,31 +653,6 @@ int scxfs_add_to_page_cache_lru(struct page *page, struct address_space *mapping
 	}
 	return ret;
 }
-
-#ifdef CONFIG_NUMA
-static struct page *__scxfs_page_cache_alloc(gfp_t gfp)
-{
-	int n;
-	struct page *page;
-
-	if (cpuset_do_page_mem_spread()) {
-		unsigned int cpuset_mems_cookie;
-		do {
-			cpuset_mems_cookie = read_mems_allowed_begin();
-			n = cpuset_mem_spread_node();
-			page = __scxfs_alloc_pages_node(n, gfp, 0);
-		} while (!page && read_mems_allowed_retry(cpuset_mems_cookie));
-
-		return page;
-	}
-	return scxfs_alloc_pages(gfp, 0);
-}
-#else
-struct page *__scxfs_page_cache_alloc(gfp_t gfp)
-{
-	return scxfs_alloc_pages(gfp, 0);
-}
-#endif
 
 /*
  * In order to wait for pages to become available there must be
@@ -1430,547 +1046,6 @@ void scxfs_page_endio(struct page *page, bool is_write, int err)
 //EXPORT_SYMBOL_GPL(page_endio);
 
 
-/**
- * page_cache_next_miss() - Find the next gap in the page cache.
- * @mapping: Mapping.
- * @index: Index.
- * @max_scan: Maximum range to search.
- *
- * Search the range [index, min(index + max_scan - 1, ULONG_MAX)] for the
- * gap with the lowest index.
- *
- * This function may be called under the rcu_read_lock.  However, this will
- * not atomically search a snapshot of the cache at a single point in time.
- * For example, if a gap is created at index 5, then subsequently a gap is
- * created at index 10, page_cache_next_miss covering both indices may
- * return 10 if called under the rcu_read_lock.
- *
- * Return: The index of the gap if found, otherwise an index outside the
- * range specified (in which case 'return - index >= max_scan' will be true).
- * In the rare case of index wrap-around, 0 will be returned.
- */
-pgoff_t scxfs_page_cache_next_miss(struct address_space *mapping,
-			     pgoff_t index, unsigned long max_scan)
-{
-	CC_XA_STATE(xas, &mapping->i_pages, index);
-
-	while (max_scan--) {
-		void *entry = cc_xas_next(&xas);
-		if (!entry || cc_xa_is_value(entry))
-			break;
-		if (xas.xa_index == 0)
-			break;
-	}
-
-	cc_xas_clear_xa_node(&xas);
-
-	return xas.xa_index;
-}
-//EXPORT_SYMBOL(page_cache_next_miss);
-
-/**
- * page_cache_prev_miss() - Find the previous gap in the page cache.
- * @mapping: Mapping.
- * @index: Index.
- * @max_scan: Maximum range to search.
- *
- * Search the range [max(index - max_scan + 1, 0), index] for the
- * gap with the highest index.
- *
- * This function may be called under the rcu_read_lock.  However, this will
- * not atomically search a snapshot of the cache at a single point in time.
- * For example, if a gap is created at index 10, then subsequently a gap is
- * created at index 5, page_cache_prev_miss() covering both indices may
- * return 5 if called under the rcu_read_lock.
- *
- * Return: The index of the gap if found, otherwise an index outside the
- * range specified (in which case 'index - return >= max_scan' will be true).
- * In the rare case of wrap-around, ULONG_MAX will be returned.
- */
-pgoff_t scxfs_page_cache_prev_miss(struct address_space *mapping,
-			     pgoff_t index, unsigned long max_scan)
-{
-	CC_XA_STATE(xas, &mapping->i_pages, index);
-
-	while (max_scan--) {
-		void *entry = cc_xas_prev(&xas);
-		if (!entry || cc_xa_is_value(entry))
-			break;
-		if (xas.xa_index == ULONG_MAX)
-			break;
-	}
-
-	cc_xas_clear_xa_node(&xas);
-
-	return xas.xa_index;
-}
-//EXPORT_SYMBOL(page_cache_prev_miss);
-
-/**
- * find_get_entry - find and get a page cache entry
- * @mapping: the address_space to search
- * @offset: the page cache index
- *
- * Looks up the page cache slot at @mapping & @offset.  If there is a
- * page cache page, it is returned with an increased refcount.
- *
- * If the slot holds a shadow entry of a previously evicted page, or a
- * swap entry from shmem/tmpfs, it is returned.
- *
- * Return: the found page or shadow entry, %NULL if nothing is found.
- */
-struct page *scxfs_find_get_entry(struct address_space *mapping, pgoff_t offset)
-{
-	CC_XA_STATE(xas, &mapping->i_pages, offset);
-	struct page *page;
-
-	//rcu_read_lock();
-repeat:
-	cc_xas_reset(&xas);
-	page = cc_xas_load(&xas, true);
-	if (cc_xas_retry(&xas, page))
-		goto repeat;
-	/*
-	 * A shadow entry of a recently evicted page, or a swap entry from
-	 * shmem/tmpfs.  Return it without attempting to raise page count.
-	 */
-	if (!page || cc_xa_is_value(page))
-		goto out;
-
-	if (!page_cache_get_speculative(page))
-		goto repeat;
-
-	/*
-	 * Has the page moved or been split?
-	 * This is part of the lockless pagecache protocol. See
-	 * include/linux/pagemap.h for details.
-	 */
-	if (unlikely(page != xas_reload(&xas))) {
-		put_page(page);
-		goto repeat;
-	}
-	page = find_subpage(page, offset);
-out:
-	//rcu_read_unlock();
-
-	cc_xas_clear_xa_node(&xas);
-
-	return page;
-}
-//EXPORT_SYMBOL(find_get_entry);
-
-/**
- * find_lock_entry - locate, pin and lock a page cache entry
- * @mapping: the address_space to search
- * @offset: the page cache index
- *
- * Looks up the page cache slot at @mapping & @offset.  If there is a
- * page cache page, it is returned locked and with an increased
- * refcount.
- *
- * If the slot holds a shadow entry of a previously evicted page, or a
- * swap entry from shmem/tmpfs, it is returned.
- *
- * find_lock_entry() may sleep.
- *
- * Return: the found page or shadow entry, %NULL if nothing is found.
- */
-struct page *scxfs_find_lock_entry(struct address_space *mapping, pgoff_t offset)
-{
-	struct page *page;
-
-repeat:
-	page = find_get_entry(mapping, offset);
-	if (page && !xa_is_value(page)) {
-		lock_page(page);
-		/* Has the page been truncated? */
-		if (unlikely(page_mapping(page) != mapping)) {
-			unlock_page(page);
-			put_page(page);
-			goto repeat;
-		}
-		VM_BUG_ON_PAGE(page_to_pgoff(page) != offset, page);
-	}
-	return page;
-}
-//EXPORT_SYMBOL(find_lock_entry);
-
-/**
- * pagecache_get_page - find and get a page reference
- * @mapping: the address_space to search
- * @offset: the page index
- * @fgp_flags: PCG flags
- * @gfp_mask: gfp mask to use for the page cache data page allocation
- *
- * Looks up the page cache slot at @mapping & @offset.
- *
- * PCG flags modify how the page is returned.
- *
- * @fgp_flags can be:
- *
- * - FGP_ACCESSED: the page will be marked accessed
- * - FGP_LOCK: Page is return locked
- * - FGP_CREAT: If page is not present then a new page is allocated using
- *   @gfp_mask and added to the page cache and the VM's LRU
- *   list. The page is returned locked and with an increased
- *   refcount.
- * - FGP_FOR_MMAP: Similar to FGP_CREAT, only we want to allow the caller to do
- *   its own locking dance if the page is already in cache, or unlock the page
- *   before returning if we had to add the page to pagecache.
- *
- * If FGP_LOCK or FGP_CREAT are specified then the function may sleep even
- * if the GFP flags specified for FGP_CREAT are atomic.
- *
- * If there is a page cache page, it is returned with an increased refcount.
- *
- * Return: the found page or %NULL otherwise.
- */
-static struct page *scxfs_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
-	int fgp_flags, gfp_t gfp_mask)
-{
-	struct page *page;
-
-repeat:
-	page = find_get_entry(mapping, offset);
-	if (xa_is_value(page))
-		page = NULL;
-	if (!page)
-		goto no_page;
-
-	if (fgp_flags & FGP_LOCK) {
-		if (fgp_flags & FGP_NOWAIT) {
-			if (!trylock_page(page)) {
-				put_page(page);
-				return NULL;
-			}
-		} else {
-			lock_page(page);
-		}
-		/* Has the page been truncated? */
-		if (unlikely(compound_head(page)->mapping != mapping)) {
-			unlock_page(page);
-			put_page(page);
-			goto repeat;
-		}
-		VM_BUG_ON_PAGE(page->index != offset, page);
-	}
-
-	if (fgp_flags & FGP_ACCESSED) 
-		mark_page_accessed(page);
-
-no_page:
-	if (!page && (fgp_flags & FGP_CREAT)) {
-		int err;
-		if ((fgp_flags & FGP_WRITE) && mapping_cap_account_dirty(mapping))
-			gfp_mask |= __GFP_WRITE;
-		if (fgp_flags & FGP_NOFS)
-			gfp_mask &= ~__GFP_FS;
-
-		page = __scxfs_page_cache_alloc(gfp_mask);
-		if (!page)
-			return NULL;
-
-		if (WARN_ON_ONCE(!(fgp_flags & (FGP_LOCK | FGP_FOR_MMAP))))
-			fgp_flags |= FGP_LOCK;
-
-		/* Init accessed so avoid atomic mark_page_accessed later */
-		if (fgp_flags & FGP_ACCESSED)
-			__SetPageReferenced(page);
-
-		err = scxfs_add_to_page_cache_lru(page, mapping, offset, gfp_mask);
-		if (unlikely(err)) {
-			put_page(page);
-			page = NULL;
-			if (err == -EEXIST)
-				goto repeat;
-		}
-
-		/*
-		 * add_to_page_cache_lru locks the page, and for mmap we expect
-		 * an unlocked page.
-		 */
-		if (page && (fgp_flags & FGP_FOR_MMAP))
-			unlock_page(page);
-	}
-
-	return page;
-}
-
-/**
- * find_get_entries - gang pagecache lookup
- * @mapping:	The address_space to search
- * @start:	The starting page cache index
- * @nr_entries:	The maximum number of entries
- * @entries:	Where the resulting entries are placed
- * @indices:	The cache indices corresponding to the entries in @entries
- *
- * find_get_entries() will search for and return a group of up to
- * @nr_entries entries in the mapping.  The entries are placed at
- * @entries.  find_get_entries() takes a reference against any actual
- * pages it returns.
- *
- * The search returns a group of mapping-contiguous page cache entries
- * with ascending indexes.  There may be holes in the indices due to
- * not-present pages.
- *
- * Any shadow entries of evicted pages, or swap entries from
- * shmem/tmpfs, are included in the returned array.
- *
- * Return: the number of pages and shadow entries which were found.
- */
-unsigned scxfs_find_get_entries(struct address_space *mapping,
-			  pgoff_t start, unsigned int nr_entries,
-			  struct page **entries, pgoff_t *indices)
-{
-	CC_XA_STATE(xas, &mapping->i_pages, start);
-	struct page *page;
-	unsigned int ret = 0;
-
-	if (!nr_entries)
-		return 0;
-
-	//rcu_read_lock();
-	cc_xas_for_each(&xas, page, ULONG_MAX) {
-		if (cc_xas_retry(&xas, page))
-			continue;
-		/*
-		 * A shadow entry of a recently evicted page, a swap
-		 * entry from shmem/tmpfs or a DAX entry.  Return it
-		 * without attempting to raise page count.
-		 */
-		if (cc_xa_is_value(page))
-			goto export;
-
-		if (!page_cache_get_speculative(page))
-			goto retry;
-
-		/* Has the page moved or been split? */
-		if (unlikely(page != cc_xas_reload(&xas)))
-			goto put_page;
-		page = find_subpage(page, xas.xa_index);
-
-export:
-		indices[ret] = xas.xa_index;
-		entries[ret] = page;
-		if (++ret == nr_entries)
-			break;
-		continue;
-put_page:
-		put_page(page);
-retry:
-		cc_xas_reset(&xas);
-	}
-	//rcu_read_unlock();
-	cc_xas_clear_xa_node(&xas);
-	return ret;
-}
-
-/**
- * find_get_pages_range - gang pagecache lookup
- * @mapping:	The address_space to search
- * @start:	The starting page index
- * @end:	The final page index (inclusive)
- * @nr_pages:	The maximum number of pages
- * @pages:	Where the resulting pages are placed
- *
- * find_get_pages_range() will search for and return a group of up to @nr_pages
- * pages in the mapping starting at index @start and up to index @end
- * (inclusive).  The pages are placed at @pages.  find_get_pages_range() takes
- * a reference against the returned pages.
- *
- * The search returns a group of mapping-contiguous pages with ascending
- * indexes.  There may be holes in the indices due to not-present pages.
- * We also update @start to index the next page for the traversal.
- *
- * Return: the number of pages which were found. If this number is
- * smaller than @nr_pages, the end of specified range has been
- * reached.
- */
-unsigned scxfs_find_get_pages_range(struct address_space *mapping, pgoff_t *start,
-			      pgoff_t end, unsigned int nr_pages,
-			      struct page **pages)
-{
-	CC_XA_STATE(xas, &mapping->i_pages, *start);
-	struct page *page;
-	unsigned ret = 0;
-
-	if (unlikely(!nr_pages))
-		return 0;
-
-	//rcu_read_lock();
-	cc_xas_for_each(&xas, page, end) {
-		if (cc_xas_retry(&xas, page))
-			continue;
-		/* Skip over shadow, swap and DAX entries */
-		if (cc_xa_is_value(page))
-			continue;
-
-		if (!page_cache_get_speculative(page))
-			goto retry;
-
-		/* Has the page moved or been split? */
-		if (unlikely(page != cc_xas_reload(&xas)))
-			goto put_page;
-
-		pages[ret] = find_subpage(page, xas.xa_index);
-		if (++ret == nr_pages) {
-			*start = xas.xa_index + 1;
-			goto out;
-		}
-		continue;
-put_page:
-		put_page(page);
-retry:
-		cc_xas_reset(&xas);
-	}
-
-	/*
-	 * We come here when there is no page beyond @end. We take care to not
-	 * overflow the index @start as it confuses some of the callers. This
-	 * breaks the iteration when there is a page at index -1 but that is
-	 * already broken anyway.
-	 */
-	if (end == (pgoff_t)-1)
-		*start = (pgoff_t)-1;
-	else
-		*start = end + 1;
-out:
-	//rcu_read_unlock();
-	cc_xas_clear_xa_node(&xas);
-
-	return ret;
-}
-
-
-/**
- * find_get_pages_contig - gang contiguous pagecache lookup
- * @mapping:	The address_space to search
- * @index:	The starting page index
- * @nr_pages:	The maximum number of pages
- * @pages:	Where the resulting pages are placed
- *
- * find_get_pages_contig() works exactly like find_get_pages(), except
- * that the returned number of pages are guaranteed to be contiguous.
- *
- * Return: the number of pages which were found.
- */
-unsigned scxfs_find_get_pages_contig(struct address_space *mapping, pgoff_t index,
-			       unsigned int nr_pages, struct page **pages)
-{
-	CC_XA_STATE(xas, &mapping->i_pages, index);
-	struct page *page;
-	unsigned int ret = 0;
-
-	if (unlikely(!nr_pages))
-		return 0;
-
-	rcu_read_lock();
-	for (page = cc_xas_load(&xas, true); page; page = cc_xas_next(&xas)) {
-		if (cc_xas_retry(&xas, page))
-			continue;
-		/*
-		 * If the entry has been swapped out, we can stop looking.
-		 * No current caller is looking for DAX entries.
-		 */
-		if (cc_xa_is_value(page))
-			break;
-
-		if (!page_cache_get_speculative(page))
-			goto retry;
-
-		/* Has the page moved or been split? */
-		if (unlikely(page != cc_xas_reload(&xas)))
-			goto put_page;
-
-		pages[ret] = find_subpage(page, xas.xa_index);
-		if (++ret == nr_pages)
-			break;
-		continue;
-put_page:
-		put_page(page);
-retry:
-		cc_xas_reset(&xas);
-	}
-	rcu_read_unlock();
-	cc_xas_clear_xa_node(&xas);
-	return ret;
-}
-//EXPORT_SYMBOL(find_get_pages_contig);
-
-/**
- * find_get_pages_range_tag - find and return pages in given range matching @tag
- * @mapping:	the address_space to search
- * @index:	the starting page index
- * @end:	The final page index (inclusive)
- * @tag:	the tag index
- * @nr_pages:	the maximum number of pages
- * @pages:	where the resulting pages are placed
- *
- * Like find_get_pages, except we only return pages which are tagged with
- * @tag.   We update @index to index the next page for the traversal.
- *
- * Return: the number of pages which were found.
- */
-unsigned scxfs_find_get_pages_range_tag(struct address_space *mapping, pgoff_t *index,
-			pgoff_t end, xa_mark_t tag, unsigned int nr_pages,
-			struct page **pages)
-{
-	CC_XA_STATE(xas, &mapping->i_pages, *index);
-	struct page *page;
-	unsigned ret = 0;
-
-	if (unlikely(!nr_pages))
-		return 0;
-
-	rcu_read_lock();
-	cc_xas_for_each_marked(&xas, page, end, tag) {
-		if (cc_xas_retry(&xas, page))
-			continue;
-		/*
-		 * Shadow entries should never be tagged, but this iteration
-		 * is lockless so there is a window for page reclaim to evict
-		 * a page we saw tagged.  Skip over it.
-		 */
-		if (cc_xa_is_value(page))
-			continue;
-
-		if (!page_cache_get_speculative(page))
-			goto retry;
-
-		/* Has the page moved or been split? */
-		if (unlikely(page != cc_xas_reload(&xas)))
-			goto put_page;
-
-		pages[ret] = find_subpage(page, xas.xa_index);
-		if (++ret == nr_pages) {
-			*index = xas.xa_index + 1;
-			goto out;
-		}
-		continue;
-put_page:
-		put_page(page);
-retry:
-		cc_xas_reset(&xas);
-	}
-
-	/*
-	 * We come here when we got to @end. We take care to not overflow the
-	 * index @index as it confuses some of the callers. This breaks the
-	 * iteration when there is a page at index -1 but that is already
-	 * broken anyway.
-	 */
-	if (end == (pgoff_t)-1)
-		*index = (pgoff_t)-1;
-	else
-		*index = end + 1;
-out:
-	rcu_read_unlock();
-	cc_xas_clear_xa_node(&xas);
-
-	return ret;
-}
-//EXPORT_SYMBOL(find_get_pages_range_tag);
-
 /*
  * CD/DVDs are error prone. When a medium error occurs, the driver may fail
  * a _large_ part of the i/o request. Imagine the worst scenario:
@@ -2046,14 +1121,14 @@ find_page:
 			goto out;
 		}
 
-		page = find_get_page(mapping, index);
+		page = cc_find_get_page(mapping, index);
 		if (!page) {
 			if (iocb->ki_flags & IOCB_NOWAIT)
 				goto would_block;
 			page_cache_sync_readahead(mapping,
 					ra, filp,
 					index, last_index - index);
-			page = find_get_page(mapping, index);
+			page = cc_find_get_page(mapping, index);
 			if (unlikely(page == NULL))
 				goto no_cached_page;
 		}
@@ -2602,76 +1677,6 @@ out_retry:
 }
 //EXPORT_SYMBOL(filemap_fault);
 
-void scxfs_filemap_map_pages(struct vm_fault *vmf,
-		pgoff_t start_pgoff, pgoff_t end_pgoff)
-{
-	struct file *file = vmf->vma->vm_file;
-	struct address_space *mapping = file->f_mapping;
-	pgoff_t last_pgoff = start_pgoff;
-	unsigned long max_idx;
-	CC_XA_STATE(xas, &mapping->i_pages, start_pgoff);
-	struct page *page;
-
-	rcu_read_lock();
-	cc_xas_for_each(&xas, page, end_pgoff) {
-		if (cc_xas_retry(&xas, page))
-			continue;
-		if (cc_xa_is_value(page))
-			goto next;
-
-		/*
-		 * Check for a locked page first, as a speculative
-		 * reference may adversely influence page migration.
-		 */
-		if (PageLocked(page))
-			goto next;
-		if (!page_cache_get_speculative(page))
-			goto next;
-
-		/* Has the page moved or been split? */
-		if (unlikely(page != cc_xas_reload(&xas)))
-			goto skip;
-		page = find_subpage(page, xas.xa_index);
-
-		if (!PageUptodate(page) ||
-				PageReadahead(page) ||
-				PageHWPoison(page))
-			goto skip;
-		if (!trylock_page(page))
-			goto skip;
-
-		if (page->mapping != mapping || !PageUptodate(page))
-			goto unlock;
-
-		max_idx = DIV_ROUND_UP(i_size_read(mapping->host), PAGE_SIZE);
-		if (page->index >= max_idx)
-			goto unlock;
-
-		if (file->f_ra.mmap_miss > 0)
-			file->f_ra.mmap_miss--;
-
-		vmf->address += (xas.xa_index - last_pgoff) << PAGE_SHIFT;
-		if (vmf->pte)
-			vmf->pte += xas.xa_index - last_pgoff;
-		last_pgoff = xas.xa_index;
-		if (alloc_set_pte(vmf, NULL, page))
-			goto unlock;
-		unlock_page(page);
-		goto next;
-unlock:
-		unlock_page(page);
-skip:
-		put_page(page);
-next:
-		/* Huge page is mapped? No need to proceed. */
-		if (pmd_trans_huge(*vmf->pmd))
-			break;
-	}
-	rcu_read_unlock();
-	cc_xas_clear_xa_node(&xas);
-}
-//EXPORT_SYMBOL(filemap_map_pages);
-
 vm_fault_t scxfs_filemap_page_mkwrite(struct vm_fault *vmf)
 {
 	struct page *page = vmf->page;
@@ -2698,9 +1703,12 @@ out:
 	return ret;
 }
 
+void cc_filemap_map_pages(struct vm_fault *vmf,
+		pgoff_t start_pgoff, pgoff_t end_pgoff);
+
 const struct vm_operations_struct scxfs_generic_file_vm_ops = {
 	.fault		= scxfs_filemap_fault_internal,
-	.map_pages	= scxfs_filemap_map_pages,
+	.map_pages	= cc_filemap_map_pages,
 	.page_mkwrite	= scxfs_filemap_page_mkwrite,
 };
 
@@ -3167,7 +2175,7 @@ struct page *scxfs_grab_cache_page_write_begin(struct address_space *mapping,
 	if (flags & AOP_FLAG_NOFS)
 		fgp_flags |= FGP_NOFS;
 
-	page = scxfs_pagecache_get_page(mapping, index, fgp_flags,
+	page = cc_pagecache_get_page(mapping, index, fgp_flags,
 			mapping_gfp_mask(mapping));
 
 	if (page)

@@ -209,16 +209,27 @@ static inline int page_cache_add_speculative(struct page *page, int count)
 
 #ifdef CONFIG_NUMA
 extern struct page *__page_cache_alloc(gfp_t gfp);
+extern struct page *__cc_page_cache_alloc(gfp_t gfp);
 #else
 static inline struct page *__page_cache_alloc(gfp_t gfp)
 {
 	return alloc_pages(gfp, 0);
+}
+
+static inline struct page *__cc_page_cache_alloc(gfp_t gfp)
+{
+	return cc_alloc_pages(gfp, 0);
 }
 #endif
 
 static inline struct page *page_cache_alloc(struct address_space *x)
 {
 	return __page_cache_alloc(mapping_gfp_mask(x));
+}
+
+static inline struct page *cc_page_cache_alloc(struct address_space *x)
+{
+	return __cc_page_cache_alloc(mapping_gfp_mask(x));
 }
 
 static inline gfp_t readahead_gfp_mask(struct address_space *x)
@@ -230,7 +241,11 @@ typedef int filler_t(void *, struct page *);
 
 pgoff_t page_cache_next_miss(struct address_space *mapping,
 			     pgoff_t index, unsigned long max_scan);
+pgoff_t cc_page_cache_next_miss(struct address_space *mapping,
+			     pgoff_t index, unsigned long max_scan);
 pgoff_t page_cache_prev_miss(struct address_space *mapping,
+			     pgoff_t index, unsigned long max_scan);
+pgoff_t cc_page_cache_prev_miss(struct address_space *mapping,
 			     pgoff_t index, unsigned long max_scan);
 
 #define FGP_ACCESSED		0x00000001
@@ -242,6 +257,8 @@ pgoff_t page_cache_prev_miss(struct address_space *mapping,
 #define FGP_FOR_MMAP		0x00000040
 
 struct page *pagecache_get_page(struct address_space *mapping, pgoff_t offset,
+		int fgp_flags, gfp_t cache_gfp_mask);
+struct page *cc_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
 		int fgp_flags, gfp_t cache_gfp_mask);
 
 /**
@@ -260,10 +277,22 @@ static inline struct page *find_get_page(struct address_space *mapping,
 	return pagecache_get_page(mapping, offset, 0, 0);
 }
 
+static inline struct page *cc_find_get_page(struct address_space *mapping,
+					pgoff_t offset)
+{
+	return cc_pagecache_get_page(mapping, offset, 0, 0);
+}
+
 static inline struct page *find_get_page_flags(struct address_space *mapping,
 					pgoff_t offset, int fgp_flags)
 {
 	return pagecache_get_page(mapping, offset, fgp_flags, 0);
+}
+
+static inline struct page *cc_find_get_page_flags(struct address_space *mapping,
+					pgoff_t offset, int fgp_flags)
+{
+	return cc_pagecache_get_page(mapping, offset, fgp_flags, 0);
 }
 
 /**
@@ -283,6 +312,12 @@ static inline struct page *find_lock_page(struct address_space *mapping,
 					pgoff_t offset)
 {
 	return pagecache_get_page(mapping, offset, FGP_LOCK, 0);
+}
+
+static inline struct page *cc_find_lock_page(struct address_space *mapping,
+					pgoff_t offset)
+{
+	return cc_pagecache_get_page(mapping, offset, FGP_LOCK, 0);
 }
 
 /**
@@ -312,6 +347,14 @@ static inline struct page *find_or_create_page(struct address_space *mapping,
 					gfp_mask);
 }
 
+static inline struct page *cc_find_or_create_page(struct address_space *mapping,
+					pgoff_t offset, gfp_t gfp_mask)
+{
+	return cc_pagecache_get_page(mapping, offset,
+					FGP_LOCK|FGP_ACCESSED|FGP_CREAT,
+					gfp_mask);
+}
+
 /**
  * grab_cache_page_nowait - returns locked page at given index in given cache
  * @mapping: target address_space
@@ -329,6 +372,14 @@ static inline struct page *grab_cache_page_nowait(struct address_space *mapping,
 				pgoff_t index)
 {
 	return pagecache_get_page(mapping, index,
+			FGP_LOCK|FGP_CREAT|FGP_NOFS|FGP_NOWAIT,
+			mapping_gfp_mask(mapping));
+}
+
+static inline struct page *cc_grab_cache_page_nowait(struct address_space *mapping,
+				pgoff_t index)
+{
+	return cc_pagecache_get_page(mapping, index,
 			FGP_LOCK|FGP_CREAT|FGP_NOFS|FGP_NOWAIT,
 			mapping_gfp_mask(mapping));
 }
@@ -607,7 +658,11 @@ static inline int fault_in_pages_readable(const char __user *uaddr, int size)
 
 int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 				pgoff_t index, gfp_t gfp_mask);
+int cc_add_to_page_cache_locked(struct page *page, struct address_space *mapping,
+				pgoff_t index, gfp_t gfp_mask);
 int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
+				pgoff_t index, gfp_t gfp_mask);
+int cc_add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 				pgoff_t index, gfp_t gfp_mask);
 extern void delete_from_page_cache(struct page *page);
 extern void __delete_from_page_cache(struct page *page, void *shadow);

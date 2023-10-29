@@ -37,8 +37,6 @@
 #include <linux/cc_xarray.h>
 
 ssize_t __scext4_generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from);
-ssize_t
-scext4_generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter);
 
 #ifdef CONFIG_FS_DAX
 static ssize_t scext4_dax_read_iter(struct kiocb *iocb, struct iov_iter *to)
@@ -81,7 +79,7 @@ static ssize_t scext4_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	if (IS_DAX(file_inode(iocb->ki_filp)))
 		return scext4_dax_read_iter(iocb, to);
 #endif
-	return scext4_generic_file_read_iter(iocb, to);
+	return cc_generic_file_read_iter(iocb, to);
 }
 
 /*
