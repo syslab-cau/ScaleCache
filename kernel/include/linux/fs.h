@@ -14,6 +14,7 @@
 #include <linux/llist.h>
 #include <linux/radix-tree.h>
 #include <linux/xarray.h>
+#include <linux/cc_xarray.h>	// seokjoo
 #include <linux/rbtree.h>
 #include <linux/init.h>
 #include <linux/pid.h>
@@ -410,10 +411,6 @@ struct address_space_operations {
 	
 	struct page *(*custom_pagecache_get_page)(struct address_space *mapping,
 		       	pgoff_t offset, int fgp_flags, gfp_t gfp_mask);
-
-	unsigned (*custom_find_get_entries)(struct address_space *mapping,
-			  pgoff_t start, unsigned int nr_entries,
-			  struct page **entries, pgoff_t *indices);
 };
 
 extern const struct address_space_operations empty_aops;
@@ -1867,7 +1864,6 @@ struct file_operations {
 				   struct file *file_out, loff_t pos_out,
 				   loff_t len, unsigned int remap_flags);
 	int (*fadvise)(struct file *, loff_t, loff_t, int);
-	void (*page_gc)(struct xarray *);
 } __randomize_layout;
 
 struct inode_operations {

@@ -26,40 +26,15 @@
 #include <linux/rmap.h>
 #include "internal.h"
 
-#include "../cc_xarray/cc_xarray.h"
+#include <linux/cc_xarray.h>
 
-/*
- * Regular page slots are stabilized by the page lock even without the tree
- * itself locked.  These unlocked entries need verification under the tree
- * lock.
- */
-static inline void __clear_shadow_entry(struct address_space *mapping,
-				pgoff_t index, void *entry)
-{
-	CC_XA_STATE(xas, &mapping->i_pages, index);
-
-	cc_xas_set_update(&xas, workingset_update_node);
-	if (cc_xas_load(&xas, false) != entry) {
-		cc_xas_rewind_refcnt(&xas);
-		cc_xas_clear_xa_node(&xas);
-		return;
-	}
-
-	CC_XA_NODE_BUG_ON(xas.xa_node, __sync_fetch_and_add(&xas.xa_node->refcnt, 0) == 64);
-
-	cc_xas_store(&xas, NULL);
-	cc_xas_rewind_refcnt(&xas);
-	cc_xas_clear_xa_node(&xas);
-	spin_lock_irq(&mapping->nr_lock);
-	mapping->nrexceptional--;
-	spin_unlock_irq(&mapping->nr_lock);
-}
-
-static void clear_shadow_entry(struct address_space *mapping, pgoff_t index,
+inline void __cc_clear_shadow_entry(struct address_space *mapping,
+				pgoff_t index, void *entry);
+static void scext4_clear_shadow_entry(struct address_space *mapping, pgoff_t index,
 			       void *entry)
 {
 	xa_lock_irq(&mapping->i_pages);
-	__clear_shadow_entry(mapping, index, entry);
+	__cc_clear_shadow_entry(mapping, index, entry);
 	xa_unlock_irq(&mapping->i_pages);
 }
 
@@ -68,7 +43,7 @@ static void clear_shadow_entry(struct address_space *mapping, pgoff_t index,
  * path. Note that the pagevec may be altered by this function by removing
  * exceptional entries similar to what pagevec_remove_exceptionals does.
  */
-static void truncate_exceptional_pvec_entries(struct address_space *mapping,
+static void scext4_truncate_exceptional_pvec_entries(struct address_space *mapping,
 				struct pagevec *pvec, pgoff_t *indices,
 				pgoff_t end)
 {
@@ -108,7 +83,7 @@ static void truncate_exceptional_pvec_entries(struct address_space *mapping,
 			continue;
 		}
 
-		__clear_shadow_entry(mapping, index, page);
+		__cc_clear_shadow_entry(mapping, index, page);
 	}
 
 	if (lock)
@@ -126,7 +101,7 @@ static int invalidate_exceptional_entry(struct address_space *mapping,
 	/* Handled by shmem itself, or for DAX we do nothing. */
 	if (shmem_mapping(mapping) || dax_mapping(mapping))
 		return 1;
-	clear_shadow_entry(mapping, index, entry);
+	scext4_clear_shadow_entry(mapping, index, entry);
 	return 1;
 }
 
@@ -142,7 +117,7 @@ static int invalidate_exceptional_entry2(struct address_space *mapping,
 		return 1;
 	if (dax_mapping(mapping))
 		return dax_invalidate_mapping_entry_sync(mapping, index);
-	clear_shadow_entry(mapping, index, entry);
+	scext4_clear_shadow_entry(mapping, index, entry);
 	return 1;
 }
 
@@ -228,8 +203,6 @@ invalidate_complete_page(struct address_space *mapping, struct page *page)
 	return ret;
 }
 
-void scext4_delete_from_page_cache(struct page *page);
-
 int truncate_inode_page(struct address_space *mapping, struct page *page)
 {
 	VM_BUG_ON_PAGE(PageTail(page), page);
@@ -238,7 +211,7 @@ int truncate_inode_page(struct address_space *mapping, struct page *page)
 		return -EIO;
 
 	truncate_cleanup_page(page);
-	scext4_delete_from_page_cache(page);
+	delete_from_page_cache(page);
 	return 0;
 }
 
@@ -277,29 +250,17 @@ int invalidate_inode_page(struct page *page)
 	return invalidate_complete_page(mapping, page);
 }
 
+inline struct page *scext4_find_lock_page(struct address_space *mapping,
+					pgoff_t offset);
 extern struct page *scext4_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
 		int fgp_flags, gfp_t gfp_mask);
-/**
- * find_lock_page - locate, pin and lock a pagecache page
- * @mapping: the address_space to search
- * @offset: the page index
- *
- * Looks up the page cache slot at @mapping & @offset.  If there is a
- * page cache page, it is returned locked and with an increased
- * refcount.
- *
- * Otherwise, %NULL is returned.
- *
- * find_lock_page() may sleep.
- */
-static inline struct page *scext4_find_lock_page(struct address_space *mapping,
-					pgoff_t offset)
-{
-	return scext4_pagecache_get_page(mapping, offset, FGP_LOCK, 0);
-}
-
-extern void scext4_delete_from_page_cache_batch(struct address_space *mapping,
+unsigned cc_pagevec_lookup_entries(struct pagevec *pvec,
+				struct address_space *mapping,
+				pgoff_t start, unsigned nr_entries,
+				pgoff_t *indices);
+void cc_delete_from_page_cache_batch(struct address_space *mapping,
 				  struct pagevec *pvec);
+
 /**
  * truncate_inode_pages_range - truncate range of pages specified by start & end byte offsets
  * @mapping: mapping to truncate
@@ -335,8 +296,17 @@ void scext4_truncate_inode_pages_range(struct address_space *mapping,
 	pgoff_t		indices[PAGEVEC_SIZE];
 	pgoff_t		index;
 	int		i;
+	unsigned long	nrexceptional;
+	unsigned long	nrpages;
+	unsigned long	flags;
 
-	if (mapping->nrpages == 0 && mapping->nrexceptional == 0)
+	spin_lock_irqsave(&mapping->nr_lock, flags);
+	nrpages = mapping->nrpages;
+	smp_rmb();
+	nrexceptional = mapping->nrexceptional;
+	spin_unlock_irqrestore(&mapping->nr_lock, flags);
+
+	if (nrpages == 0 && nrexceptional == 0)
 		goto out;
 
 	/* Offsets within partial pages */
@@ -362,7 +332,7 @@ void scext4_truncate_inode_pages_range(struct address_space *mapping,
 
 	pagevec_init(&pvec);
 	index = start;
-	while (index < end && pagevec_lookup_entries(&pvec, mapping, index,
+	while (index < end && cc_pagevec_lookup_entries(&pvec, mapping, index,
 			min(end - index, (pgoff_t)PAGEVEC_SIZE),
 			indices)) {
 		/*
@@ -399,10 +369,10 @@ void scext4_truncate_inode_pages_range(struct address_space *mapping,
 		}
 		for (i = 0; i < pagevec_count(&locked_pvec); i++)
 			truncate_cleanup_page(locked_pvec.pages[i]);
-		scext4_delete_from_page_cache_batch(mapping, &locked_pvec);
+		cc_delete_from_page_cache_batch(mapping, &locked_pvec);
 		for (i = 0; i < pagevec_count(&locked_pvec); i++)
 			unlock_page(locked_pvec.pages[i]);
-		truncate_exceptional_pvec_entries(mapping, &pvec, indices, end);
+		scext4_truncate_exceptional_pvec_entries(mapping, &pvec, indices, end);
 		pagevec_release(&pvec);
 		cond_resched();
 		index++;
@@ -449,7 +419,7 @@ void scext4_truncate_inode_pages_range(struct address_space *mapping,
 	index = start;
 	for ( ; ; ) {
 		cond_resched();
-		if (!pagevec_lookup_entries(&pvec, mapping, index,
+		if (!cc_pagevec_lookup_entries(&pvec, mapping, index,
 			min(end - index, (pgoff_t)PAGEVEC_SIZE), indices)) {
 			/* If all gone from start onwards, we're done */
 			if (index == start)
@@ -485,7 +455,7 @@ void scext4_truncate_inode_pages_range(struct address_space *mapping,
 			truncate_inode_page(mapping, page);
 			unlock_page(page);
 		}
-		truncate_exceptional_pvec_entries(mapping, &pvec, indices, end);
+		scext4_truncate_exceptional_pvec_entries(mapping, &pvec, indices, end);
 		pagevec_release(&pvec);
 		index++;
 	}
@@ -509,7 +479,7 @@ out:
  */
 void scext4_truncate_inode_pages(struct address_space *mapping, loff_t lstart)
 {
-	scext4_truncate_inode_pages_range(mapping, lstart, (loff_t)-1);
+	truncate_inode_pages_range(mapping, lstart, (loff_t)-1);
 }
 //EXPORT_SYMBOL(truncate_inode_pages);
 
@@ -526,6 +496,7 @@ void scext4_truncate_inode_pages_final(struct address_space *mapping)
 {
 	unsigned long nrexceptional;
 	unsigned long nrpages;
+	unsigned long flags;
 
 	/*
 	 * Page reclaim can not participate in regular inode lifetime
@@ -541,9 +512,11 @@ void scext4_truncate_inode_pages_final(struct address_space *mapping)
 	 * nrexceptional first, then decreases nrpages.  Make sure we see
 	 * this in the right order or we might miss an entry.
 	 */
+	spin_lock_irqsave(&mapping->nr_lock, flags);
 	nrpages = mapping->nrpages;
 	smp_rmb();
 	nrexceptional = mapping->nrexceptional;
+	spin_unlock_irqrestore(&mapping->nr_lock, flags);
 
 	if (nrpages || nrexceptional) {
 		/*
@@ -553,9 +526,9 @@ void scext4_truncate_inode_pages_final(struct address_space *mapping)
 		 * completed before starting the final truncate.
 		 */
 		xa_lock_irq(&mapping->i_pages);
-		spin_lock_irq(&mapping->nr_lock);
+		spin_lock_irqsave(&mapping->nr_lock, flags);
+		spin_unlock_irqrestore(&mapping->nr_lock, flags);
 		xa_unlock_irq(&mapping->i_pages);
-		spin_unlock_irq(&mapping->nr_lock);
 	}
 
 	/*
@@ -592,7 +565,7 @@ unsigned long scext4_invalidate_mapping_pages(struct address_space *mapping,
 	int i;
 
 	pagevec_init(&pvec);
-	while (index <= end && pagevec_lookup_entries(&pvec, mapping, index,
+	while (index <= end && cc_pagevec_lookup_entries(&pvec, mapping, index,
 			min(end - index, (pgoff_t)PAGEVEC_SIZE - 1) + 1,
 			indices)) {
 		for (i = 0; i < pagevec_count(&pvec); i++) {
@@ -729,13 +702,21 @@ int scext4_invalidate_inode_pages2_range(struct address_space *mapping,
 	int ret = 0;
 	int ret2 = 0;
 	int did_range_unmap = 0;
+	unsigned long nrexceptional, nrpages;
+	unsigned long flags;
 
-	if (mapping->nrpages == 0 && mapping->nrexceptional == 0)
+	spin_lock_irqsave(&mapping->nr_lock, flags);
+	nrpages = mapping->nrpages;
+	smp_rmb();
+	nrexceptional = mapping->nrexceptional;
+	spin_unlock_irqrestore(&mapping->nr_lock, flags);
+
+	if (nrpages == 0 && nrexceptional == 0)
 		goto out;
 
 	pagevec_init(&pvec);
 	index = start;
-	while (index <= end && pagevec_lookup_entries(&pvec, mapping, index,
+	while (index <= end && cc_pagevec_lookup_entries(&pvec, mapping, index,
 			min(end - index, (pgoff_t)PAGEVEC_SIZE - 1) + 1,
 			indices)) {
 		for (i = 0; i < pagevec_count(&pvec); i++) {

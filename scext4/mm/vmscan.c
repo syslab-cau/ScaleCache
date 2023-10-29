@@ -419,105 +419,8 @@ static pageout_t pageout(struct page *page, struct address_space *mapping,
 	return PAGE_CLEAN;
 }
 
-extern void __scext4_delete_from_page_cache(struct page *page, void *shadow);
-
-/*
- * Same as remove_mapping, but if the page is removed from the mapping, it
- * gets returned with a refcount of 0.
- */
-static int __remove_mapping(struct address_space *mapping, struct page *page,
-			    bool reclaimed)
-{
-	unsigned long flags;
-	int refcount;
-
-	BUG_ON(!PageLocked(page));
-	BUG_ON(mapping != page_mapping(page));
-	
-	local_irq_save(flags);
-	/*
-	 * The non racy check for a busy page.
-	 *
-	 * Must be careful with the order of the tests. When someone has
-	 * a ref to the page, it may be possible that they dirty it then
-	 * drop the reference. So if PageDirty is tested before page_count
-	 * here, then the following race may occur:
-	 *
-	 * get_user_pages(&page);
-	 * [user mapping goes away]
-	 * write_to(page);
-	 *				!PageDirty(page)    [good]
-	 * SetPageDirty(page);
-	 * put_page(page);
-	 *				!page_count(page)   [good, discard it]
-	 *
-	 * [oops, our write_to data is lost]
-	 *
-	 * Reversing the order of the tests ensures such a situation cannot
-	 * escape unnoticed. The smp_rmb is needed to ensure the page->flags
-	 * load is not satisfied before that of page->_refcount.
-	 *
-	 * Note that if SetPageDirty is always performed via set_page_dirty,
-	 * and thus under the i_pages lock, then this ordering is not required.
-	 */
-	refcount = 1 + compound_nr(page);
-	if (!page_ref_freeze(page, refcount))
-		goto cannot_free;
-	/* note: atomic_cmpxchg in page_ref_freeze provides the smp_rmb */
-	if (unlikely(PageDirty(page))) {
-		page_ref_unfreeze(page, refcount);
-		goto cannot_free;
-	}
-
-	if (PageSwapCache(page)) {
-		swp_entry_t swap = { .val = page_private(page) };
-		xa_lock(&mapping->i_pages);
-		mem_cgroup_swapout(page, swap);
-		__delete_from_swap_cache(page, swap);
-		xa_unlock_irqrestore(&mapping->i_pages, flags);
-		put_swap_page(page, swap);
-	} else {
-		void (*freepage)(struct page *);
-		void *shadow = NULL;
-
-		freepage = mapping->a_ops->freepage;
-		/*
-		 * Remember a shadow entry for reclaimed file cache in
-		 * order to detect refaults, thus thrashing, later on.
-		 *
-		 * But don't store shadows in an address space that is
-		 * already exiting.  This is not just an optizimation,
-		 * inode reclaim needs to empty out the radix tree or
-		 * the nodes are lost.  Don't plant shadows behind its
-		 * back.
-		 *
-		 * We also don't store shadows for DAX mappings because the
-		 * only page cache pages found in these are zero pages
-		 * covering holes, and because we don't want to mix DAX
-		 * exceptional entries and shadow exceptional entries in the
-		 * same address_space.
-		 */
-		if (reclaimed && page_is_file_cache(page) &&
-		    !mapping_exiting(mapping) && !dax_mapping(mapping))
-			shadow = workingset_eviction(page);
-		preempt_disable();
-		//__scext4_delete_from_page_cache(page, shadow); 
-		__scext4_delete_from_page_cache(page, NULL); 
-		//__delete_from_page_cache(page, shadow); 
-		local_irq_restore(flags);
-		preempt_enable();
-
-		if (freepage != NULL)
-			freepage(page);
-	}
-
-	return 1;
-
-cannot_free:
-	local_irq_restore(flags);
-	preempt_enable();
-	return 0;
-}
+int __cc_remove_mapping(struct address_space *mapping, struct page *page,
+			    bool reclaimed);
 
 /*
  * Attempt to detach a locked page from its ->mapping.  If it is dirty or if
@@ -527,7 +430,7 @@ cannot_free:
  */
 int scext4_remove_mapping(struct address_space *mapping, struct page *page)
 {
-	if (__remove_mapping(mapping, page, false)) {
+	if (__cc_remove_mapping(mapping, page, false)) {
 		/*
 		 * Unfreezing the refcount with 1 rather than 2 effectively
 		 * drops the pagecache ref for us without requiring another
@@ -991,7 +894,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 
 			count_vm_event(PGLAZYFREED);
 			count_memcg_page_event(page, PGLAZYFREED);
-		} else if (!mapping || !__remove_mapping(mapping, page, true))
+		} else if (!mapping || !__cc_remove_mapping(mapping, page, true))
 			goto keep_locked;
 
 		unlock_page(page);
@@ -2133,9 +2036,6 @@ extern int shrinker_nr_max;
 
 #define SHRINK_BATCH 128
 
-extern unsigned long scan_shadow_nodes(struct shrinker *shrinker,
-				       struct shrink_control *sc);
-
 static unsigned long do_shrink_slab(struct shrink_control *shrinkctl,
 				    struct shrinker *shrinker, int priority)
 {
@@ -2235,8 +2135,8 @@ static unsigned long do_shrink_slab(struct shrink_control *shrinkctl,
 
 		shrinkctl->nr_to_scan = nr_to_scan;
 		shrinkctl->nr_scanned = nr_to_scan;
-		//ret = shrinker->scan_objects(shrinker, shrinkctl);
-		ret = scan_shadow_nodes(shrinker, shrinkctl);
+		ret = shrinker->scan_objects(shrinker, shrinkctl);
+		//ret = scan_shadow_nodes(shrinker, shrinkctl);
 		if (ret == SHRINK_STOP)
 			break;
 		freed += ret;

@@ -1002,6 +1002,20 @@ unsigned pagevec_lookup_entries(struct pagevec *pvec,
 	return pagevec_count(pvec);
 }
 
+unsigned cc_find_get_entries(struct address_space *mapping,
+			  pgoff_t start, unsigned int nr_entries,
+			  struct page **entries, pgoff_t *indices);
+unsigned cc_pagevec_lookup_entries(struct pagevec *pvec,
+				struct address_space *mapping,
+				pgoff_t start, unsigned nr_entries,
+				pgoff_t *indices)
+{
+	pvec->nr = cc_find_get_entries(mapping, start, nr_entries,
+				    pvec->pages, indices);
+	return pagevec_count(pvec);
+}
+EXPORT_SYMBOL(cc_pagevec_lookup_entries);	// seokjoo
+
 /**
  * pagevec_remove_exceptionals - pagevec exceptionals pruning
  * @pvec:	The pagevec to prune

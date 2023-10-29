@@ -1,41 +1,42 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * XArray implementation
+ * Concurrent XArray implementation
+ * Based on XArray implementation
  * Copyright (c) 2017-2018 Microsoft Corporation
  * Copyright (c) 2018-2020 Oracle
- * Author: Matthew Wilcox <willy@infradead.org>
+ * Original Author: Matthew Wilcox <willy@infradead.org>
  */
 
 #include <linux/bitmap.h>
 #include <linux/export.h>
 #include <linux/list.h>
 #include <linux/slab.h>
-#include "cc_xarray.h"
 
 #include <linux/xarray.h>
+#include <linux/cc_xarray.h>
 
 /*
  * Coding conventions in this file:
  *
- * @xa is used to refer to the entire xarray.
- * @xas is the 'xarray operation state'.  It may be either a pointer to
- * an xa_state, or an xa_state stored on the stack.  This is an unfortunate
+ * @xa is used to refer to the entire cc_xarray.
+ * @xas is the 'cc_xarray operation state'.  It may be either a pointer to
+ * an cc_xa_state, or an cc_xa_state stored on the stack.  This is an unfortunate
  * ambiguity.
  * @index is the index of the entry being operated on
  * @mark is an cc_xa_mark_t; a small number indicating one of the mark bits.
- * @node refers to an xa_node; usually the primary one being operated on by
+ * @node refers to an cc_xa_node; usually the primary one being operated on by
  * this function.
- * @offset is the index into the slots array inside an xa_node.
- * @parent refers to the @xa_node closer to the head than @node.
- * @entry refers to something stored in a slot in the xarray
+ * @offset is the index into the slots array inside an cc_xa_node.
+ * @parent refers to the @cc_xa_node closer to the head than @node.
+ * @entry refers to something stored in a slot in the cc_xarray
  */
 
-static inline unsigned int xa_lock_type(const struct xarray *xa)
+static inline unsigned int cc_xa_lock_type(const struct cc_xarray *xa)
 {
 	return (__force unsigned int)xa->xa_flags & 3;
 }
 
-static inline void cc_xas_lock_type(struct xa_state *xas, unsigned int lock_type)
+static inline void cc_xas_lock_type(struct cc_xa_state *xas, unsigned int lock_type)
 {
 	if (lock_type == CC_XA_LOCK_IRQ)
 		cc_xas_lock_irq(xas);
@@ -45,7 +46,7 @@ static inline void cc_xas_lock_type(struct xa_state *xas, unsigned int lock_type
 		cc_xas_lock(xas);
 }
 
-static inline void cc_xas_unlock_type(struct xa_state *xas, unsigned int lock_type)
+static inline void cc_xas_unlock_type(struct cc_xa_state *xas, unsigned int lock_type)
 {
 	if (lock_type == CC_XA_LOCK_IRQ)
 		cc_xas_unlock_irq(xas);
@@ -55,65 +56,65 @@ static inline void cc_xas_unlock_type(struct xa_state *xas, unsigned int lock_ty
 		cc_xas_unlock(xas);
 }
 
-static inline bool cc_xa_track_free(const struct xarray *xa)
+static inline bool cc_xa_track_free(const struct cc_xarray *xa)
 {
 	return xa->xa_flags & CC_XA_FLAGS_TRACK_FREE;
 }
 
-static inline bool cc_xa_zero_busy(const struct xarray *xa)
+static inline bool cc_xa_zero_busy(const struct cc_xarray *xa)
 {
 	return xa->xa_flags & CC_XA_FLAGS_ZERO_BUSY;
 }
 
-static inline void cc_xa_mark_set(struct xarray *xa, cc_xa_mark_t mark)
+static inline void cc_xa_mark_set(struct cc_xarray *xa, cc_xa_mark_t mark)
 {
 	if (!(xa->xa_flags & CC_XA_FLAGS_MARK(mark)))
 		xa->xa_flags |= CC_XA_FLAGS_MARK(mark);
 }
 
-static inline void cc_xa_mark_clear(struct xarray *xa, cc_xa_mark_t mark)
+static inline void cc_xa_mark_clear(struct cc_xarray *xa, cc_xa_mark_t mark)
 {
 	if (xa->xa_flags & CC_XA_FLAGS_MARK(mark))
 		xa->xa_flags &= ~(CC_XA_FLAGS_MARK(mark));
 }
 
-static inline unsigned long *node_marks(struct xa_node *node, cc_xa_mark_t mark)
+static inline unsigned long *node_marks(struct cc_xa_node *node, cc_xa_mark_t mark)
 {
 	return node->marks[(__force unsigned)mark];
 }
 
-static inline bool node_get_mark(struct xa_node *node,
+static inline bool node_get_mark(struct cc_xa_node *node,
 		unsigned int offset, cc_xa_mark_t mark)
 {
 	return test_bit(offset, node_marks(node, mark));
 }
 
 /* returns true if the bit was set */
-static inline bool node_set_mark(struct xa_node *node, unsigned int offset,
+static inline bool node_set_mark(struct cc_xa_node *node, unsigned int offset,
 				cc_xa_mark_t mark)
 {
 	return __test_and_set_bit(offset, node_marks(node, mark));
 }
 
 /* returns true if the bit was set */
-static inline bool node_clear_mark(struct xa_node *node, unsigned int offset,
+static inline bool node_clear_mark(struct cc_xa_node *node, unsigned int offset,
 				cc_xa_mark_t mark)
 {
 	return __test_and_clear_bit(offset, node_marks(node, mark));
 }
 
-static inline bool node_any_mark(struct xa_node *node, cc_xa_mark_t mark)
+static inline bool node_any_mark(struct cc_xa_node *node, cc_xa_mark_t mark)
 {
 	return !bitmap_empty(node_marks(node, mark), CC_XA_CHUNK_SIZE);
 }
 
-static inline void node_mark_all(struct xa_node *node, cc_xa_mark_t mark)
+static inline void node_mark_all(struct cc_xa_node *node, cc_xa_mark_t mark)
 {
 	bitmap_fill(node_marks(node, mark), CC_XA_CHUNK_SIZE);
 }
 
 #if 0
-static inline bool logical_delete(struct xa_node *node)
+static inline bool logical_delete(struct cc_xa_node *node)
 {
 	return __test_and_set_bit(node->del, 1);
 }
@@ -130,7 +131,7 @@ static inline bool logical_delete(struct xa_node *node)
  * Set a mark on the first entry if any entry has it set.  Clear marks on
  * all sibling entries.
  */
-static void cc_xas_squash_marks(const struct xa_state *xas)
+static void cc_xas_squash_marks(const struct cc_xa_state *xas)
 {
 	unsigned int mark = 0;
 	unsigned int limit = xas->xa_offset + xas->xa_sibs + 1;
@@ -148,31 +149,31 @@ static void cc_xas_squash_marks(const struct xa_state *xas)
 }
 
 /* extracts the offset within this node from the index */
-static unsigned int get_offset(unsigned long index, struct xa_node *node)
+static unsigned int get_offset(unsigned long index, struct cc_xa_node *node)
 {
 	return (index >> node->shift) & CC_XA_CHUNK_MASK;
 }
 
-static void cc_xas_set_offset(struct xa_state *xas)
+static void cc_xas_set_offset(struct cc_xa_state *xas)
 {
 	xas->xa_offset = get_offset(xas->xa_index, xas->xa_node);
 }
 
 /* move the index either forwards (find) or backwards (sibling slot) */
-static void cc_xas_move_index(struct xa_state *xas, unsigned long offset)
+static void cc_xas_move_index(struct cc_xa_state *xas, unsigned long offset)
 {
 	unsigned int shift = xas->xa_node->shift;
 	xas->xa_index &= ~CC_XA_CHUNK_MASK << shift;
 	xas->xa_index += offset << shift;
 }
 
-static void cc_xas_advance(struct xa_state *xas)
+static void cc_xas_advance(struct cc_xa_state *xas)
 {
 	xas->xa_offset++;
 	cc_xas_move_index(xas, xas->xa_offset);
 }
 
-static void *set_bounds(struct xa_state *xas)
+static void *set_bounds(struct cc_xa_state *xas)
 {
 	//xas->xa_node = CC_XAS_BOUNDS;
 	cc_xas_set_xa_node(xas, CC_XAS_BOUNDS);
@@ -183,10 +184,10 @@ static void *set_bounds(struct xa_state *xas)
  * Starts a walk.  If the @xas is already valid, we assume that it's on
  * the right path and just return where we've got to.  If we're in an
  * error state, return NULL.  If the index is outside the current scope
- * of the xarray, return NULL without changing @xas->xa_node.  Otherwise
+ * of the cc_xarray, return NULL without changing @xas->xa_node.  Otherwise
  * set @xas->xa_node to NULL and return the current head of the array.
  */
-static void *cc_xas_start(struct xa_state *xas)
+static void *cc_xas_start(struct cc_xa_state *xas)
 {
 	void *entry;
 
@@ -209,7 +210,7 @@ static void *cc_xas_start(struct xa_state *xas)
 	return entry;
 }
 
-static void *cc_xas_descend(struct xa_state *xas, struct xa_node *node)
+static void *cc_xas_descend(struct cc_xa_state *xas, struct cc_xa_node *node)
 {
 	unsigned int offset = get_offset(xas->xa_index, node);
 	void *entry = cc_xa_entry(xas->xa, node, offset);
@@ -233,7 +234,7 @@ static void *cc_xas_descend(struct xa_state *xas, struct xa_node *node)
  * stored at xa_index.  However, it will do nothing and return %NULL if
  * @xas is in an error state.  cc_xas_load() will never expand the tree.
  *
- * If the xa_state is set up to operate on a multi-index entry, cc_xas_load()
+ * If the cc_xa_state is set up to operate on a multi-index entry, cc_xas_load()
  * may return %NULL or an internal entry, even if there are entries
  * present within the range specified by @xas.
  *
@@ -242,15 +243,15 @@ static void *cc_xas_descend(struct xa_state *xas, struct xa_node *node)
  */
 #include <linux/sched.h>
 
-void *cc_xas_load(struct xa_state *xas, bool rewind)
+void *cc_xas_load(struct cc_xa_state *xas, bool rewind)
 {
-	struct xa_node *parent = NULL;
+	struct cc_xa_node *parent = NULL;
 	void *entry = cc_xas_start(xas);
 	void **slot;
-	struct xa_node *node = NULL;
+	struct cc_xa_node *node = NULL;
 
 	while (cc_xa_is_node(entry)) {
-		struct xa_node *node = cc_xa_to_node(entry);
+		node = cc_xa_to_node(entry);
 		//unsigned short refcnt = __sync_fetch_and_add(&node->refcnt, 0);
 		//CC_XA_NODE_BUG_ON(node, node->refcnt > 0);
 		//if (refcnt > 0)
@@ -261,15 +262,17 @@ void *cc_xas_load(struct xa_state *xas, bool rewind)
 			CC_XA_NODE_BUG_ON(node, 1);
 		}
 		
-		node = cc_xa_get_node(xas, cc_xa_to_node(entry));
+		node = cc_xa_get_node(xas, node);
 
 /*sys */
-		while(__sync_fetch_and_add(&node->gc_flag, 0)){
-			//wait for other thread	
+		while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST)) {
+			// wait for other thread
+			//printk("waiting for other thread while searching\n");
+			cpu_relax();
 		}
 
 
-		if (__sync_fetch_and_add(&node->del, 0)) {
+		if (__atomic_load_n(&node->del, __ATOMIC_SEQ_CST)) {
 			//printk("node logically deleted! returning null\n");
 			entry = NULL;
 			cc_xas_reset(xas);
@@ -293,17 +296,17 @@ descend:
 
 	return entry;
 }
-//EXPORT_SYMBOL_GPL(cc_xas_load);
+EXPORT_SYMBOL_GPL(cc_xas_load);
 
-void *cc_xas_load_debug(struct xa_state *xas)
+void *cc_xas_load_debug(struct cc_xa_state *xas)
 {
-	struct xa_node *parent = NULL;
+	struct cc_xa_node *parent = NULL;
 	void *entry = cc_xas_start(xas);
 	void **slot;
-	struct xa_node *node = NULL;
+	struct cc_xa_node *node = NULL;
 
 	while (cc_xa_is_node(entry)) {
-		struct xa_node *node = cc_xa_to_node(entry);
+		struct cc_xa_node *node = cc_xa_to_node(entry);
 		//unsigned short refcnt = __sync_fetch_and_add(&node->refcnt, 0);
 		//CC_XA_NODE_BUG_ON(node, node->refcnt > 0);
 		//if (refcnt > 0)
@@ -341,9 +344,9 @@ descend:
 extern struct kmem_cache *radix_tree_node_cachep;
 extern void radix_tree_node_rcu_free(struct rcu_head *head);
 
-#define CC_XA_RCU_FREE	((struct xarray *)1)
+#define CC_XA_RCU_FREE	((struct cc_xarray *)1)
 
-static void xa_node_free(struct xa_node *node)
+static void cc_xa_node_free(struct cc_xa_node *node)
 {
 	CC_XA_NODE_BUG_ON(node, !list_empty(&node->private_list));
 	node->array = CC_XA_RCU_FREE;
@@ -357,9 +360,9 @@ static void xa_node_free(struct xa_node *node)
  *
  * This function is now internal-only.
  */
-static void cc_xas_destroy(struct xa_state *xas)
+static void cc_xas_destroy(struct cc_xa_state *xas)
 {
-	struct xa_node *next, *node = xas->xa_alloc;
+	struct cc_xa_node *next, *node = xas->xa_alloc;
 
 	while (node) {
 		CC_XA_NODE_BUG_ON(node, !list_empty(&node->private_list));
@@ -381,13 +384,13 @@ static void cc_xas_destroy(struct xa_state *xas)
  * the caller should retry the operation.
  *
  * Forward progress is guaranteed as one node is allocated here and
- * stored in the xa_state where it will be found by cc_xas_alloc().  More
+ * stored in the cc_xa_state where it will be found by cc_xas_alloc().  More
  * nodes will likely be found in the slab allocator, but we do not tie
  * them up here.
  *
  * Return: true if memory was needed, and was successfully allocated.
  */
-bool cc_xas_nomem(struct xa_state *xas, gfp_t gfp)
+bool cc_xas_nomem(struct cc_xa_state *xas, gfp_t gfp)
 {
 	if (xas->xa_node != CC_XA_ERROR(-ENOMEM)) {
 		cc_xas_destroy(xas);
@@ -404,7 +407,7 @@ bool cc_xas_nomem(struct xa_state *xas, gfp_t gfp)
 	cc_xas_set_xa_node(xas, CC_XAS_RESTART);
 	return true;
 }
-//EXPORT_SYMBOL_GPL(cc_xas_nomem);
+EXPORT_SYMBOL_GPL(cc_xas_nomem);
 
 /*
  * __cc_xas_nomem() - Drop locks and allocate memory if needed.
@@ -415,10 +418,10 @@ bool cc_xas_nomem(struct xa_state *xas, gfp_t gfp)
  *
  * Return: true if memory was needed, and was successfully allocated.
  */
-static bool __cc_xas_nomem(struct xa_state *xas, gfp_t gfp)
+static bool __cc_xas_nomem(struct cc_xa_state *xas, gfp_t gfp)
 	__must_hold(xas->xa->xa_lock)
 {
-	unsigned int lock_type = xa_lock_type(xas->xa);
+	unsigned int lock_type = cc_xa_lock_type(xas->xa);
 
 	if (xas->xa_node != CC_XA_ERROR(-ENOMEM)) {
 		cc_xas_destroy(xas);
@@ -442,18 +445,18 @@ static bool __cc_xas_nomem(struct xa_state *xas, gfp_t gfp)
 	return true;
 }
 
-static void cc_xas_update(struct xa_state *xas, struct xa_node *node)
+static void cc_xas_update(struct cc_xa_state *xas, struct cc_xa_node *node)
 {
-//	if (xas->xa_update)
-//		xas->xa_update(node);
-//	else
-//		CC_XA_NODE_BUG_ON(node, !list_empty(&node->private_list));
+	if (xas->xa_update)
+		xas->xa_update(node);
+	else
+		CC_XA_NODE_BUG_ON(node, !list_empty(&node->private_list));
 }
 
-static void *cc_xas_alloc(struct xa_state *xas, unsigned int shift)
+static void *cc_xas_alloc(struct cc_xa_state *xas, unsigned int shift)
 {
-	struct xa_node *parent = xas->xa_node;
-	struct xa_node *node = xas->xa_alloc;
+	struct cc_xa_node *parent = xas->xa_node;
+	struct cc_xa_node *node = xas->xa_alloc;
 
 	if (cc_xas_invalid(xas))
 		return NULL;
@@ -496,8 +499,8 @@ static void *cc_xas_alloc(struct xa_state *xas, unsigned int shift)
 }
 
 #ifdef CONFIG_XARRAY_MULTI
-/* Returns the number of indices covered by a given xa_state */
-static unsigned long cc_xas_size(const struct xa_state *xas)
+/* Returns the number of indices covered by a given cc_xa_state */
+static unsigned long cc_xas_size(const struct cc_xa_state *xas)
 {
 	return (xas->xa_sibs + 1UL) << xas->xa_shift;
 }
@@ -509,7 +512,7 @@ static unsigned long cc_xas_size(const struct xa_state *xas)
  * multi-index entry at index 0, the calculation is a little more complex
  * than you might expect.
  */
-static unsigned long cc_xas_max(struct xa_state *xas)
+static unsigned long cc_xas_max(struct cc_xa_state *xas)
 {
 	unsigned long max = xas->xa_index;
 
@@ -533,10 +536,10 @@ static unsigned long max_index(void *entry)
 	return (CC_XA_CHUNK_SIZE << cc_xa_to_node(entry)->shift) - 1;
 }
 
-static void cc_xas_shrink(struct xa_state *xas)
+static void cc_xas_shrink(struct cc_xa_state *xas)
 {
-	struct xarray *xa = xas->xa;
-	struct xa_node *node = xas->xa_node;
+	struct cc_xarray *xa = xas->xa;
+	struct cc_xa_node *node = xas->xa_node;
 
 	for (;;) {
 		void *entry;
@@ -563,7 +566,7 @@ static void cc_xas_shrink(struct xa_state *xas)
 		if (!cc_xa_is_node(entry))
 			RCU_INIT_POINTER(node->slots[0], CC_XA_RETRY_ENTRY);
 		cc_xas_update(xas, node);
-		//xa_node_free(node);
+		//cc_xa_node_free(node);
 		
 		/*
 		if (!logical_delete (node))
@@ -580,19 +583,19 @@ static void cc_xas_shrink(struct xa_state *xas)
 #include <linux/sched.h>
 
 /*
- * cc_xas_delete_node() - Attempt to delete an xa_node
+ * cc_xas_delete_node() - Attempt to delete an cc_xa_node
  * @xas: Array operation state.
  *
  * Attempts to delete the @xas->xa_node.  This will fail if xa->node has
  * a non-zero reference count.
  */
-static void cc_xas_delete_node(struct xa_state *xas)
+static void cc_xas_delete_node(struct cc_xa_state *xas)
 {
-	struct xa_node *node = xas->xa_node;
+	struct cc_xa_node *node = xas->xa_node;
 	void *temp;
 
 	for (;;) {
-		struct xa_node *parent;
+		struct cc_xa_node *parent;
 		unsigned char parent_cnt;
 		int gg_count = 65535;
 		unsigned char count;
@@ -602,7 +605,7 @@ static void cc_xas_delete_node(struct xa_state *xas)
 			break;
 
 		CC_XA_NODE_BUG_ON(node, node->count > CC_XA_CHUNK_SIZE);
-		if (count = __sync_fetch_and_add(&node->count, 0))	// Check if entry count is not zero.
+		if (count = __atomic_load_n(&node->count, __ATOMIC_SEQ_CST))	// Check if entry count is not zero.
 			break;
 		
 		//if (__sync_fetch_and_add(&node->parent->count, 0) > 1) {
@@ -612,7 +615,12 @@ static void cc_xas_delete_node(struct xa_state *xas)
 		// Return if gc_flag is already set. --> Someone else is already doing gc...
 		if (!__sync_bool_compare_and_swap(&node->gc_flag, 0, 1))
 			break;
-		
+
+		if (__atomic_load_n(&node->del, __ATOMIC_SEQ_CST)) {
+			CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->gc_flag, 1, 0));
+			break;
+		}
+
 		/* 
 		 * At this point, 
 		 * 1) node is not root node.
@@ -622,7 +630,7 @@ static void cc_xas_delete_node(struct xa_state *xas)
 		cc_xas_set_xa_node(xas, NULL);	// to put refcnt of xas->xa_node
 
 		/* if there are other threads in the parent node */
-		if (__sync_fetch_and_add(&node->parent->refcnt, 0) > 1) {
+		if (__atomic_load_n(&node->parent->refcnt, __ATOMIC_SEQ_CST) > 1) {
 		//	printk("parent->refcnt %d\n", node->parent->refcnt);
 			CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->gc_flag, 1, 0));
 			cc_xas_set_xa_node(xas, node);
@@ -630,7 +638,7 @@ static void cc_xas_delete_node(struct xa_state *xas)
 		}
 
 		/* if there are other threads in the node */
-		if (__sync_fetch_and_add(&node->refcnt, 0) > 1) {
+		if (__atomic_load_n(&node->refcnt, __ATOMIC_SEQ_CST) > 1) {
 		//	printk("node->refcnt %d\n", node->refcnt);
 			CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->gc_flag, 1, 0));
 			cc_xas_set_xa_node(xas, node);
@@ -642,13 +650,13 @@ static void cc_xas_delete_node(struct xa_state *xas)
 		//CC_XA_NODE_BUG_ON(node, (refcnt = __sync_fetch_and_add(&node->refcnt, 0)) == 0);
 		
 		//parent = cc_xa_get_node(node->parent);
-		parent = xa_parent_locked(xas->xa, node);
+		parent = cc_xa_parent_locked(xas->xa, node);
 		//xas->xa_node = parent;
 		cc_xas_set_xa_node(xas, parent);
 		xas->xa_offset = node->offset;
 	
 		//pr_cont("deleting node[@%px]... count %u parent @%px\n", node, count, parent);
-		//xa_node_free(node);
+		//cc_xa_node_free(node);
 		CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->del, 0, 1));
 
 		if (!parent) {
@@ -674,12 +682,12 @@ static void cc_xas_delete_node(struct xa_state *xas)
 	//	cc_xas_shrink(xas);
 }
 
-// static void cc_xas_delete_node(struct xa_state *xas)
+// static void cc_xas_delete_node(struct cc_xa_state *xas)
 // {
-// 	struct xa_node *node = xas->xa_node;
+// 	struct cc_xa_node *node = xas->xa_node;
 
 // 	for (;;) {
-// 		struct xa_node *parent;
+// 		struct cc_xa_node *parent;
 // 		unsigned char node_cnt, parent_cnt;
 
 // 		node_cnt = __sync_fetch_and_add(&node->count, 0);
@@ -691,7 +699,7 @@ static void cc_xas_delete_node(struct xa_state *xas)
 // 		parent = __sync_fetch_and_add(&node->parent, 0);
 // 		xas->xa_node = parent;
 // 		xas->xa_offset = node->offset;
-// 		//xa_node_free(node);
+// 		//cc_xa_node_free(node);
 
 // 		if (!parent) {
 // 			//xas->xa->xa_head = NULL;
@@ -719,11 +727,11 @@ static void cc_xas_delete_node(struct xa_state *xas)
  * of its subnodes.  There may be RCU walkers with references into the tree,
  * so we must replace all entries with retry markers.
  */
-static void cc_xas_free_nodes(struct xa_state *xas, struct xa_node *top)
+static void cc_xas_free_nodes(struct cc_xa_state *xas, struct cc_xa_node *top)
 {
 	unsigned int offset = 0;
-	struct xa_node *node = top;
-	//struct xa_node *node = cc_xa_get_node(top);
+	struct cc_xa_node *node = top;
+	//struct cc_xa_node *node = cc_xa_get_node(top);
 	
 	//if (node == CC_XAS_RESTART)
 	//	return;
@@ -735,7 +743,7 @@ static void cc_xas_free_nodes(struct xa_state *xas, struct xa_node *top)
 		void *entry = cc_xa_entry_locked(xas->xa, node, offset);
 
 		if (node->shift && cc_xa_is_node(entry)) {
-			struct xa_node *child;
+			struct cc_xa_node *child;
 			// descend to left most slot until we reach leaf node
 			child = cc_xa_to_node(entry);
 			//child = cc_xa_get_node(cc_xa_to_node(entry));
@@ -751,7 +759,7 @@ static void cc_xas_free_nodes(struct xa_state *xas, struct xa_node *top)
 next:
 		offset++;	// replace every slots in this node 1with RETRY entry
 		while (offset == CC_XA_CHUNK_SIZE) {
-			struct xa_node *parent;
+			struct cc_xa_node *parent;
 
 			parent = cc_xa_parent_locked(xas->xa, node);
 			offset = node->offset + 1;
@@ -759,7 +767,7 @@ next:
 			node->nr_values = 0;
 			cc_xas_update(xas, node);
 			//cc_xa_put_node(node);
-			xa_node_free(node);
+			cc_xa_node_free(node);
 			if (node == top)
 				return;
 			//node = cc_xa_get_node(parent);
@@ -772,15 +780,15 @@ next:
  * cc_xas_expand adds nodes to the head of the tree until it has reached
  * sufficient height to be able to contain @xas->xa_index
  */
-static int cc_xas_expand(struct xa_state *xas, void *head)
+static int cc_xas_expand(struct cc_xa_state *xas, void *head)
 {
-	struct xarray *xa = xas->xa;
-	struct xa_node *node = NULL, *oldroot = NULL;
+	struct cc_xarray *xa = xas->xa;
+	struct cc_xa_node *node = NULL, *oldroot = NULL;
 	unsigned int shift = 0;
 	unsigned long max = cc_xas_max(xas);
 	void *tmp_head;
 
-	if (!head) {	// xarray is empty!
+	if (!head) {	// cc_xarray is empty!
 		if (max == 0)
 			return 0;
 		while ((max >> shift) >= CC_XA_CHUNK_SIZE)
@@ -796,7 +804,7 @@ static int cc_xas_expand(struct xa_state *xas, void *head)
 		}
 		shift = node->shift + CC_XA_CHUNK_SHIFT;
 	}
-	// else: xarray head is pointing entry!
+	// else: cc_xarray head is pointing entry!
 
 	//xas->xa_node = NULL;
 	cc_xas_set_xa_node(xas, NULL);
@@ -841,11 +849,11 @@ static int cc_xas_expand(struct xa_state *xas, void *head)
 			oldroot->offset = 0;
 			//rcu_assign_pointer(cc_xa_to_node(head)->parent, node); 
 			// Perform CAS
-			struct xa_node *tmp_node = cc_xa_parent(xas->xa, oldroot);
+			struct cc_xa_node *tmp_node = cc_xa_parent(xas->xa, oldroot);
 			if (tmp_node != NULL || !__sync_bool_compare_and_swap(
 				    &oldroot->parent, tmp_node, node)) {
-				struct xa_node *parent = __sync_fetch_and_add(&oldroot->parent, 0);
-				xa_node_free(node);
+				struct cc_xa_node *parent = __atomic_load_n(&oldroot->parent, __ATOMIC_SEQ_CST);
+				cc_xa_node_free(node);
 				head = cc_xa_mk_node(parent);
 				//cc_xa_put_node(oldroot);
 				goto ascend;
@@ -857,7 +865,7 @@ static int cc_xas_expand(struct xa_state *xas, void *head)
 		head = cc_xa_mk_node(node);
 		//rcu_assign_pointer(xa->xa_head, head);
 		if (!__sync_bool_compare_and_swap(&xa->xa_head, tmp_head, head)) {
-			xa_node_free(node);
+			cc_xa_node_free(node);
 			head = cc_xa_head(xas->xa);
 			goto ascend;
 		}
@@ -889,15 +897,15 @@ ascend:
  * Notice that the node containing the slot returned from this function 
  * got refcnt increased. User of this function must decrease refcnt of the node.
  */
-static void *cc_xas_create(struct xa_state *xas, bool allow_root)
+static void *cc_xas_create(struct cc_xa_state *xas, bool allow_root)
 {
-	struct xarray *xa = xas->xa;
+	struct cc_xarray *xa = xas->xa;
 	void *entry, *temp;
 	void __rcu **slot;
-	struct xa_node *node = xas->xa_node;
+	struct cc_xa_node *node = xas->xa_node;
 	int shift;
 	unsigned int order = xas->xa_shift;
-	struct xa_node *parent = NULL;
+	struct cc_xa_node *parent = NULL;
 
 	if (cc_xas_top(node)) { 
 		entry = cc_xa_head_locked(xa); 
@@ -936,14 +944,14 @@ static void *cc_xas_create(struct xa_state *xas, bool allow_root)
 		//}
 		if (!entry) {
 			void *curr;
-			struct xa_node *parent = xas->xa_node;
+			struct cc_xa_node *parent = xas->xa_node;
 			node = cc_xa_get_node(xas, cc_xas_alloc(xas, shift));
 			if (!node)
 				break;
 			if (cc_xa_track_free(xa))
 				node_mark_all(node, CC_XA_FREE_MARK);
 			//rcu_assign_pointer(*slot, cc_xa_mk_node(node));
-			if (curr = __sync_val_compare_and_swap(
+			if (curr = (void *)__sync_val_compare_and_swap(
 					slot, NULL, cc_xa_mk_node(node)) != NULL) {
 				//cc_xa_put_node(node);	// TODO: delete from the list!!
 			//	printk("CAS failed! (%s:%d)\n", __func__, __LINE__);
@@ -951,7 +959,7 @@ static void *cc_xas_create(struct xa_state *xas, bool allow_root)
 				struct node_trace_entry *entry = container_of(&node, struct node_trace_entry, node);
 				BUG_ON((unsigned long) entry < 100);
 				list_del(&entry->list);
-				xa_node_free(node);
+				cc_xa_node_free(node);
 				kfree(entry);
 				//pr_cont("(%s:%d) ", __func__, __LINE__);
 				node = cc_xa_get_node(xas, cc_xa_to_node(curr));
@@ -968,8 +976,10 @@ static void *cc_xas_create(struct xa_state *xas, bool allow_root)
 			//pr_cont("(%s:%d) ", __func__, __LINE__);
 			node = cc_xa_get_node(xas, cc_xa_to_node(entry));
 
-			while (__sync_fetch_and_add(&node->gc_flag, 0)) {
+			while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST)) {
 				// wait for other thread
+				//printk("waiting for other thread while creating\n");
+				cpu_relax();
 			}
 
 			if (__sync_bool_compare_and_swap(&node->del, 1, 0)) {
@@ -1013,7 +1023,7 @@ descend:
  * range.  This is for the benefit of users which have not yet been
  * converted to use multi-index entries.
  */
-void cc_xas_create_range(struct xa_state *xas)
+void cc_xas_create_range(struct cc_xa_state *xas)
 {
 	unsigned long index = xas->xa_index;
 	unsigned char shift = xas->xa_shift;
@@ -1037,7 +1047,7 @@ void cc_xas_create_range(struct xa_state *xas)
 		xas->xa_index -= CC_XA_CHUNK_SIZE;
 
 		for (;;) {
-			struct xa_node *node = xas->xa_node;
+			struct cc_xa_node *node = xas->xa_node;
 			//xas->xa_node = cc_xa_parent_locked(xas->xa, node);
 			cc_xas_set_xa_node(xas, cc_xa_parent_locked(xas->xa, node));
 			xas->xa_offset = node->offset - 1;
@@ -1058,28 +1068,45 @@ success:
 }
 //EXPORT_SYMBOL_GPL(cc_xas_create_range);
 
-static void update_node(struct xa_state *xas, struct xa_node *node,
+static void update_node(struct cc_xa_state *xas, struct cc_xa_node *node,
 		int count, int values)
 {
 	int node_count, nr_values;
+	struct cc_xa_node *parent;
 
 	if (!node || (!count && !values))
 		return;
 
+	CC_XA_NODE_BUG_ON(node, !__atomic_load_n(&node->refcnt, __ATOMIC_SEQ_CST));
 	CC_XA_NODE_BUG_ON(node, count > 1 || count < -1);
 
 	// node->count += count;
 	// node->nr_values += values;
 	node_count = __sync_add_and_fetch(&node->count, count);
 	nr_values = __sync_add_and_fetch(&node->nr_values, values);
+
+	while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST)) {
+		// wait for other thread
+		//printk("waiting for other thread while creating\n");
+		cpu_relax();
+	}
+
+	if (node_count > 0) {
+		if (__sync_bool_compare_and_swap(&node->del, 1, 0)) {
+			// if the node is marked as deleted, reuse it.
+			parent = cc_xa_parent(xas->xa, node);
+			if (parent) {
+				BUG_ON((unsigned long) parent < 100);
+				__sync_add_and_fetch(&parent->count, 1);
+			}
+			//printk("reusing node[@%px]... parent @%px (%s:%d)\n", node, parent, __func__, __LINE__);
+		}
+	}
 	//CC_XA_NODE_BUG_ON(node, (node_count > CC_XA_CHUNK_SIZE) &&
 	//			(node_count < (U8_MAX - CC_XA_CHUNK_SIZE)));
 	//CC_XA_NODE_BUG_ON(node, (nr_values > CC_XA_CHUNK_SIZE) && 
 	//			(nr_values < (U8_MAX - CC_XA_CHUNK_SIZE)));
 	cc_xas_update(xas, node);
-/*	if (count < 0)
-		cc_xas_delete_node(xas);
-*/
 	/* sys
 	 *
 	 * if(node_count < 0)
@@ -1093,21 +1120,6 @@ static void update_node(struct xa_state *xas, struct xa_node *node,
 	 //	printk("%s, node_count: %d is minus\n", __func__, node_count);
 	 if(node_count <= 0 && count < 0)
 	 	cc_xas_delete_node(xas);
-
-
-	//if (count < 0)
-	//{
-	//	if (!node->del){
-	// 		__sync_fetch_and_add(&node->del, 1);
-	// 	}
-	//		
-	//}
-
-
-	//if (node->del){
-	//	if (count > 0)
-	//		__sync_fetch_and_sub(&node->del, 1);
-	//}
 }
 
 /**
@@ -1123,9 +1135,9 @@ static void update_node(struct xa_state *xas, struct xa_node *node,
  *
  * Return: The old entry at this index.
  */
-void *cc_xas_store(struct xa_state *xas, void *entry)
+void *cc_xas_store(struct cc_xa_state *xas, void *entry)
 {
-	struct xa_node *node;
+	struct cc_xa_node *node;
 	void __rcu **slot = &xas->xa->xa_head;	// slot pointer
 	unsigned int offset, max;
 	int count = 0;
@@ -1256,7 +1268,7 @@ void *cc_xas_store(struct xa_state *xas, void *entry)
 	cc_xas_rewind_refcnt(xas);
 	return first;
 }
-//EXPORT_SYMBOL_GPL(cc_xas_store);
+EXPORT_SYMBOL_GPL(cc_xas_store);
 
 /**
  * cc_xas_get_mark() - Returns the state of this mark.
@@ -1266,7 +1278,7 @@ void *cc_xas_store(struct xa_state *xas, void *entry)
  * Return: true if the mark is set, false if the mark is clear or @xas
  * is in an error state.
  */
-bool cc_xas_get_mark(const struct xa_state *xas, cc_xa_mark_t mark)
+bool cc_xas_get_mark(const struct cc_xa_state *xas, cc_xa_mark_t mark)
 {
 	if (cc_xas_invalid(xas))
 		return false;
@@ -1285,9 +1297,9 @@ bool cc_xas_get_mark(const struct xa_state *xas, cc_xa_mark_t mark)
  * on all the ancestor entries.  Does nothing if @xas has not been walked to
  * an entry, or is in an error state.
  */
-void cc_xas_set_mark(const struct xa_state *xas, cc_xa_mark_t mark)
+void cc_xas_set_mark(const struct cc_xa_state *xas, cc_xa_mark_t mark)
 {
-	struct xa_node *node = xas->xa_node;
+	struct cc_xa_node *node = xas->xa_node;
 	unsigned int offset = xas->xa_offset;
 
 	if (cc_xas_invalid(xas))
@@ -1303,7 +1315,7 @@ void cc_xas_set_mark(const struct xa_state *xas, cc_xa_mark_t mark)
 	if (!cc_xa_marked(xas->xa, mark))
 		cc_xa_mark_set(xas->xa, mark);
 }
-//EXPORT_SYMBOL_GPL(cc_xas_set_mark);
+EXPORT_SYMBOL_GPL(cc_xas_set_mark);
 
 /**
  * cc_xas_clear_mark() - Clears the mark on this entry and its parents.
@@ -1314,9 +1326,9 @@ void cc_xas_set_mark(const struct xa_state *xas, cc_xa_mark_t mark)
  * attempting to clear it on all the ancestor entries.  Does nothing if
  * @xas has not been walked to an entry, or is in an error state.
  */
-void cc_xas_clear_mark(const struct xa_state *xas, cc_xa_mark_t mark)
+void cc_xas_clear_mark(const struct cc_xa_state *xas, cc_xa_mark_t mark)
 {
-	struct xa_node *node = xas->xa_node;
+	struct cc_xa_node *node = xas->xa_node;
 	unsigned int offset = xas->xa_offset;
 
 	if (cc_xas_invalid(xas))
@@ -1348,7 +1360,7 @@ void cc_xas_clear_mark(const struct xa_state *xas, cc_xa_mark_t mark)
  * This implementation is not as efficient as it could be; we may walk
  * up the tree multiple times.
  */
-void cc_xas_init_marks(const struct xa_state *xas)
+void cc_xas_init_marks(const struct cc_xa_state *xas)
 {
 	cc_xa_mark_t mark = 0;
 
@@ -1362,10 +1374,10 @@ void cc_xas_init_marks(const struct xa_state *xas)
 		mark_inc(mark);
 	}
 }
-//EXPORT_SYMBOL_GPL(cc_xas_init_marks);
+EXPORT_SYMBOL_GPL(cc_xas_init_marks);
 
 #ifdef CONFIG_XARRAY_MULTI
-static unsigned int node_get_marks(struct xa_node *node, unsigned int offset)
+static unsigned int node_get_marks(struct cc_xa_node *node, unsigned int offset)
 {
 	unsigned int marks = 0;
 	cc_xa_mark_t mark = CC_XA_MARK_0;
@@ -1381,8 +1393,8 @@ static unsigned int node_get_marks(struct xa_node *node, unsigned int offset)
 	return marks;
 }
 
-static void node_set_marks(struct xa_node *node, unsigned int offset,
-			struct xa_node *child, unsigned int marks)
+static void node_set_marks(struct cc_xa_node *node, unsigned int offset,
+			struct cc_xa_node *child, unsigned int marks)
 {
 	cc_xa_mark_t mark = CC_XA_MARK_0;
 
@@ -1412,7 +1424,7 @@ static void node_set_marks(struct xa_node *node, unsigned int offset,
  *
  * Context: May sleep if @gfp flags permit.
  */
-void cc_xas_split_alloc(struct xa_state *xas, void *entry, unsigned int order,
+void cc_xas_split_alloc(struct cc_xa_state *xas, void *entry, unsigned int order,
 		gfp_t gfp)
 {
 	unsigned int sibs = (1 << (order % CC_XA_CHUNK_SHIFT)) - 1;
@@ -1427,7 +1439,7 @@ void cc_xas_split_alloc(struct xa_state *xas, void *entry, unsigned int order,
 	do {
 		unsigned int i;
 		void *sibling;
-		struct xa_node *node;
+		struct cc_xa_node *node;
 
 		node = kmem_cache_alloc(radix_tree_node_cachep, gfp);
 		if (!node)
@@ -1453,7 +1465,7 @@ nomem:
 	cc_xas_destroy(xas);
 	cc_xas_set_err(xas, -ENOMEM);
 }
-//EXPORT_SYMBOL_GPL(cc_xas_split_alloc);
+EXPORT_SYMBOL_GPL(cc_xas_split_alloc);
 
 /**
  * cc_xas_split() - Split a multi-index entry into smaller entries.
@@ -1465,11 +1477,11 @@ nomem:
  *
  * Context: Any context.  The caller should hold the xa_lock.
  */
-void cc_xas_split(struct xa_state *xas, void *entry, unsigned int order)
+void cc_xas_split(struct cc_xa_state *xas, void *entry, unsigned int order)
 {
 	unsigned int sibs = (1 << (order % CC_XA_CHUNK_SHIFT)) - 1;
 	unsigned int offset, marks;
-	struct xa_node *node;
+	struct cc_xa_node *node;
 	void *curr = cc_xas_load(xas, false);
 	int values = 0;
 
@@ -1484,7 +1496,7 @@ void cc_xas_split(struct xa_state *xas, void *entry, unsigned int order)
 	offset = xas->xa_offset + sibs;
 	do {
 		if (xas->xa_shift < node->shift) {
-			struct xa_node *child = xas->xa_alloc;
+			struct cc_xa_node *child = xas->xa_alloc;
 
 			xas->xa_alloc = rcu_dereference_raw(child->parent);
 			child->shift = node->shift - CC_XA_CHUNK_SHIFT;
@@ -1517,7 +1529,7 @@ void cc_xas_split(struct xa_state *xas, void *entry, unsigned int order)
 	__sync_fetch_and_add(&node->nr_values, values);
 	cc_xas_rewind_refcnt(xas);
 }
-//EXPORT_SYMBOL_GPL(cc_xas_split);
+EXPORT_SYMBOL_GPL(cc_xas_split);
 #endif
 
 /**
@@ -1535,9 +1547,9 @@ void cc_xas_split(struct xa_state *xas, void *entry, unsigned int order)
  * Note that cc_xas_pause() only works for forward iteration.  If a user needs
  * to pause a reverse iteration, we will need a cc_xas_pause_rev().
  */
-void cc_xas_pause(struct xa_state *xas)
+void cc_xas_pause(struct cc_xa_state *xas)
 {
-	struct xa_node *node = xas->xa_node;
+	struct cc_xa_node *node = xas->xa_node;
 
 	if (cc_xas_invalid(xas))
 		return;
@@ -1558,7 +1570,7 @@ void cc_xas_pause(struct xa_state *xas)
 		xas->xa_index++;
 	}
 }
-//EXPORT_SYMBOL_GPL(cc_xas_pause);
+EXPORT_SYMBOL_GPL(cc_xas_pause);
 
 /*
  * __cc_xas_prev() - Find the previous entry in the XArray.
@@ -1567,7 +1579,7 @@ void cc_xas_pause(struct xa_state *xas)
  * Helper function for cc_xas_prev() which handles all the complex cases
  * out of line.
  */
-void *__cc_xas_prev(struct xa_state *xas)
+void *__cc_xas_prev(struct cc_xa_state *xas)
 {
 	void *entry;
 
@@ -1599,7 +1611,7 @@ void *__cc_xas_prev(struct xa_state *xas)
 		cc_xas_set_offset(xas);
 	}
 }
-//EXPORT_SYMBOL_GPL(__cc_xas_prev);
+EXPORT_SYMBOL_GPL(__cc_xas_prev);
 
 /*
  * __cc_xas_next() - Find the next entry in the XArray.
@@ -1608,7 +1620,7 @@ void *__cc_xas_prev(struct xa_state *xas)
  * Helper function for cc_xas_next() which handles all the complex cases
  * out of line.
  */
-void *__cc_xas_next(struct xa_state *xas)
+void *__cc_xas_next(struct cc_xa_state *xas)
 {
 	void *entry;
 
@@ -1640,7 +1652,7 @@ void *__cc_xas_next(struct xa_state *xas)
 		cc_xas_set_offset(xas);
 	}
 }
-//EXPORT_SYMBOL_GPL(__cc_xas_next);
+EXPORT_SYMBOL_GPL(__cc_xas_next);
 
 /**
  * cc_xas_find() - Find the next present entry in the XArray.
@@ -1658,7 +1670,7 @@ void *__cc_xas_next(struct xa_state *xas)
  *
  * Return: The entry, if found, otherwise %NULL.
  */
-void *cc_xas_find(struct xa_state *xas, unsigned long max)
+void *cc_xas_find(struct cc_xa_state *xas, unsigned long max)
 {
 	void *entry;
 
@@ -1712,7 +1724,7 @@ void *cc_xas_find(struct xa_state *xas, unsigned long max)
 	cc_xas_rewind_refcnt(xas);
 	return NULL;
 }
-//EXPORT_SYMBOL_GPL(cc_xas_find);
+EXPORT_SYMBOL_GPL(cc_xas_find);
 
 /**
  * cc_xas_find_marked() - Find the next marked entry in the XArray.
@@ -1735,12 +1747,12 @@ void *cc_xas_find(struct xa_state *xas, unsigned long max)
  *
  * Return: The entry, if found, otherwise %NULL.
  */
-void *cc_xas_find_marked(struct xa_state *xas, unsigned long max, cc_xa_mark_t mark)
+void *cc_xas_find_marked(struct cc_xa_state *xas, unsigned long max, cc_xa_mark_t mark)
 {
 	bool advance = true;
 	unsigned int offset;
 	void *entry;
-	struct xa_node *node;
+	struct cc_xa_node *node;
 
 	if (cc_xas_error(xas))
 		return NULL;
@@ -1820,7 +1832,7 @@ max:
 	cc_xas_set_xa_node(xas, CC_XAS_RESTART);
 	return NULL;
 }
-//EXPORT_SYMBOL_GPL(cc_xas_find_marked);
+EXPORT_SYMBOL_GPL(cc_xas_find_marked);
 
 /**
  * cc_xas_find_conflict() - Find the next present entry in a range.
@@ -1831,7 +1843,7 @@ max:
  * Context: Any context.  Expects xa_lock to be held.
  * Return: The next entry in the range covered by @xas or %NULL.
  */
-void *cc_xas_find_conflict(struct xa_state *xas)
+void *cc_xas_find_conflict(struct cc_xa_state *xas)
 {
 	void *curr;
 
@@ -1846,11 +1858,12 @@ void *cc_xas_find_conflict(struct xa_state *xas)
 		if (!curr)
 			return NULL;
 		while (cc_xa_is_node(curr)) {
-			struct xa_node *node = cc_xa_get_node(xas, cc_xa_to_node(curr));
-			while(__sync_fetch_and_add(&node->gc_flag, 0)){
-				//wait for other thread	
+			struct cc_xa_node *node = cc_xa_get_node(xas, cc_xa_to_node(curr));
+			while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST)) {
+				//wait for other thread
+				cpu_relax();
 			}
-			if (__sync_fetch_and_add(&node->del, 0)) {
+			if (__atomic_load_n(&node->del, __ATOMIC_SEQ_CST)) {
 			//	printk("node logically deleted! returning null\n");
 				return NULL;
 			}
@@ -1898,46 +1911,58 @@ void *cc_xas_find_conflict(struct xa_state *xas)
 	cc_xas_rewind_refcnt(xas);
 	return NULL;
 }
-//EXPORT_SYMBOL_GPL(cc_xas_find_conflict);
+EXPORT_SYMBOL_GPL(cc_xas_find_conflict);
 
-#if 1
-void cc_xa_garbage_collect_entry(struct xarray *xa, void *entry, unsigned long index, unsigned long shift, int *flag)
+void cc_xa_garbage_collect_entry(struct cc_xarray *xa, void *entry, unsigned long index, unsigned long shift, int *done)
 {
-	if (!entry){	
+	struct cc_xa_node *node, *parent;
+	unsigned long i;
+	void *temp;
+
+	if (!cc_xa_is_node(entry))
+		return;
+
+	if (shift == 0) {
+		//pr_cont("%px\n", entry);
 		return;
 	}
 
+	node = cc_xa_to_node(entry);	
+	if (__atomic_load_n(&node->count, __ATOMIC_SEQ_CST))	// Check if entry count is not zero.
+		goto iter_node;
 
-	if (cc_xa_is_node(entry)) {
-		if (shift == 0) {
-			//pr_cont("%px\n", entry);
-		} else {
-			unsigned long i;
-			struct xa_node *node = cc_xa_to_node(entry);	
-			if (!node->count || node->del){
-				struct xa_node *parent;
-				parent = node->parent;
+	// Wait if gc_flag is already set. --> Someone else is already doing gc...
+	if (!__sync_bool_compare_and_swap(&node->gc_flag, 0, 1))
+		goto iter_node;
 
-				if (!parent) {
-					cc_xa_destroy(xa);
-					return;
-				}
-				parent->slots[node->offset] = NULL;
-				parent->count--;
-				*flag = 0;
-				//cc_xa_node_free(node);
-				entry = NULL;
-				kmem_cache_free(radix_tree_node_cachep, node);
-				return;
-			}
-			//cc_xa_dump_node(node);
-			for (i = 0; i < CC_XA_CHUNK_SIZE; i++){
-				cc_xa_garbage_collect_entry(xa, node->slots[i],
-				      index + (i << node->shift), node->shift, flag);
-				if (!cc_xa_head(xa))
-					return;
-			}
+	if (__atomic_load_n(&node->del, __ATOMIC_SEQ_CST)) {
+		parent = cc_xa_parent_locked(xa, node);
+
+		if (!parent) {
+			xa->xa_head = NULL;
+			return;
 		}
+
+		while (!__sync_bool_compare_and_swap(&parent->gc_flag, 0, 1))	// wait for other thread
+			cpu_relax();
+
+		temp = parent->slots[node->offset];
+		while (!__sync_bool_compare_and_swap(&parent->slots[node->offset], temp, NULL))
+			temp = parent->slots[node->offset];
+
+		*done = 0;
+		cc_xa_node_free(node);
+		CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&parent->gc_flag, 1, 0));
+		entry = NULL;
+		return;
+	}
+	//cc_xa_dump_node(node);
+iter_node:
+	for (i = 0; i < CC_XA_CHUNK_SIZE; i++){
+		cc_xa_garbage_collect_entry(xa, node->slots[i],
+		      index + (i << node->shift), node->shift, done);
+		if (!cc_xa_head(xa))
+			return;
 	}
 }
 
@@ -1950,38 +1975,39 @@ void cc_xa_garbage_collect_entry(struct xarray *xa, void *entry, unsigned long i
  *
  * Set NUll to entries that have CC_XA_MARK_DEL marks
  */
-void cc_xa_garbage_collector(struct xarray *xa)
+void cc_xa_garbage_collector(struct cc_xarray *xa)
 {
+	struct cc_xa_node *node;
+	unsigned int shift;
 	void *entry;
-	int *flag;
-	flag = kmalloc(sizeof(int), GFP_KERNEL);
-	for (;;){
-		if (xa)
-			entry = xa->xa_head;
-		else
-			return;
-		if (!entry){
-			//cc_xa_destroy(xa);
-			kfree(flag);
-			return;
-		}
-		struct xa_node *node = NULL;
-		unsigned int shift = 0;
+	int done = 0;
+	unsigned long flags;
+
+	BUG_ON(!xa);
+
+	cc_xa_lock_irqsave(xa, flags);
+
+	for (;;) {
+		entry = cc_xa_head(xa);
+		if (done)
+			break;
+		node = NULL;
+		shift = 0;
 
 		if (cc_xa_is_node(entry)) {
 			node = cc_xa_to_node(entry);
 			shift = node->shift + CC_XA_CHUNK_SHIFT;
 		}
-		cc_xa_dump(xa);
-		*flag = 1;
-		cc_xa_garbage_collect_entry(xa, entry, 0, shift, flag);
-		if (*flag)
-			break;
+		//cc_xa_dump(xa);
+		done = 1;
+		cc_xa_garbage_collect_entry(xa, entry, 0, shift, &done);
 	}
-	kfree(flag);
+	cc_xa_unlock_irqrestore(xa, flags);
+
+	if (!entry)
+		cc_xa_destroy(xa);
 }
-//EXPORT_SYMBOL(cc_xa_garbage_collector);
-#endif
+EXPORT_SYMBOL(cc_xa_garbage_collector);
 
 /**
  * cc_xa_load() - Load an entry from an XArray.
@@ -1991,7 +2017,7 @@ void cc_xa_garbage_collector(struct xarray *xa)
  * Context: Any context.  Takes and releases the RCU lock.
  * Return: The entry at @index in @xa.
  */
-void *cc_xa_load(struct xarray *xa, unsigned long index)
+void *cc_xa_load(struct cc_xarray *xa, unsigned long index)
 {
 	CC_XA_STATE(xas, xa, index);
 	void *entry;
@@ -2006,9 +2032,9 @@ void *cc_xa_load(struct xarray *xa, unsigned long index)
 	cc_xas_clear_xa_node(&xas);
 	return entry;
 }
-//EXPORT_SYMBOL(cc_xa_load);
+EXPORT_SYMBOL(cc_xa_load);
 
-static void *cc_xas_result(struct xa_state *xas, void *curr)
+static void *cc_xas_result(struct cc_xa_state *xas, void *curr)
 {
 	if (cc_xa_is_zero(curr))
 		return NULL;
@@ -2029,7 +2055,7 @@ static void *cc_xas_result(struct xa_state *xas, void *curr)
  * Context: Any context.  Expects xa_lock to be held on entry.
  * Return: The entry which used to be at this index.
  */
-void *__cc_xa_erase(struct xarray *xa, unsigned long index)
+void *__cc_xa_erase(struct cc_xarray *xa, unsigned long index)
 {
 	void *result;
 	
@@ -2052,7 +2078,7 @@ void *__cc_xa_erase(struct xarray *xa, unsigned long index)
  * Context: Any context.  Takes and releases the xa_lock.
  * Return: The entry which used to be at this index.
  */
-void *cc_xa_erase(struct xarray *xa, unsigned long index)
+void *cc_xa_erase(struct cc_xarray *xa, unsigned long index)
 {
 	void *entry;
 
@@ -2079,7 +2105,7 @@ void *cc_xa_erase(struct xarray *xa, unsigned long index)
  * release and reacquire xa_lock if @gfp flags permit.
  * Return: The old entry at this index or cc_xa_err() if an error happened.
  */
-void *__cc_xa_store(struct xarray *xa, unsigned long index, void *entry, gfp_t gfp)
+void *__cc_xa_store(struct cc_xarray *xa, unsigned long index, void *entry, gfp_t gfp)
 {
 	CC_XA_STATE(xas, xa, index);
 	void *curr, *result;
@@ -2118,13 +2144,13 @@ void *__cc_xa_store(struct xarray *xa, unsigned long index, void *entry, gfp_t g
  * cannot be stored in an XArray, or cc_xa_err(-ENOMEM) if memory allocation
  * failed.
  */
-void *cc_xa_store(struct xarray *xa, unsigned long index, void *entry, gfp_t gfp)
+void *cc_xa_store(struct cc_xarray *xa, unsigned long index, void *entry, gfp_t gfp)
 {
 	void *curr;
 
-	xa_lock(xa);
+	cc_xa_lock(xa);
 	curr = __cc_xa_store(xa, index, entry, gfp);
-	xa_unlock(xa);
+	cc_xa_unlock(xa);
 
 	return curr;
 }
@@ -2146,7 +2172,7 @@ void *cc_xa_store(struct xarray *xa, unsigned long index, void *entry, gfp_t gfp
  * release and reacquire xa_lock if @gfp flags permit.
  * Return: The old entry at this index or cc_xa_err() if an error happened.
  */
-void *__cc_xa_cmpxchg(struct xarray *xa, unsigned long index,
+void *__cc_xa_cmpxchg(struct cc_xarray *xa, unsigned long index,
 			void *old, void *entry, gfp_t gfp)
 {
 	CC_XA_STATE(xas, xa, index);
@@ -2185,7 +2211,7 @@ void *__cc_xa_cmpxchg(struct xarray *xa, unsigned long index,
  * Return: 0 if the store succeeded.  -EBUSY if another entry was present.
  * -ENOMEM if memory could not be allocated.
  */
-int __cc_xa_insert(struct xarray *xa, unsigned long index, void *entry, gfp_t gfp)
+int __cc_xa_insert(struct cc_xarray *xa, unsigned long index, void *entry, gfp_t gfp)
 {
 	CC_XA_STATE(xas, xa, index);
 	void *curr;
@@ -2215,7 +2241,7 @@ int __cc_xa_insert(struct xarray *xa, unsigned long index, void *entry, gfp_t gf
 //EXPORT_SYMBOL(__cc_xa_insert);
 
 #ifdef CONFIG_XARRAY_MULTI
-static void cc_xas_set_range(struct xa_state *xas, unsigned long first,
+static void cc_xas_set_range(struct cc_xa_state *xas, unsigned long first,
 		unsigned long last)
 {
 	unsigned int shift = 0;
@@ -2264,7 +2290,7 @@ static void cc_xas_set_range(struct xa_state *xas, unsigned long first,
  * Return: %NULL on success, cc_xa_err(-EINVAL) if @entry cannot be stored in
  * an XArray, or cc_xa_err(-ENOMEM) if memory allocation failed.
  */
-void *cc_xa_store_range(struct xarray *xa, unsigned long first,
+void *cc_xa_store_range(struct cc_xarray *xa, unsigned long first,
 		unsigned long last, void *entry, gfp_t gfp)
 {
 	void *result;
@@ -2311,7 +2337,7 @@ unlock:
  *
  * Return: A number between 0 and 63 indicating the order of the entry.
  */
-int cc_xa_get_order(struct xarray *xa, unsigned long index)
+int cc_xa_get_order(struct cc_xarray *xa, unsigned long index)
 {
 	CC_XA_STATE(xas, xa, index);
 	void *entry;
@@ -2331,7 +2357,7 @@ int cc_xa_get_order(struct xarray *xa, unsigned long index)
 
 		if (slot >= CC_XA_CHUNK_SIZE)
 			break;
-		if (!cc_xa_is_sibling(__sync_fetch_and_add(&xas.xa_node->slots[slot], 0)))
+		if (!cc_xa_is_sibling(__atomic_load_n(&xas.xa_node->slots[slot], __ATOMIC_SEQ_CST)))
 			break;
 		order++;
 	}
@@ -2343,7 +2369,7 @@ unlock:
 
 	return order;
 }
-//EXPORT_SYMBOL(cc_xa_get_order);
+EXPORT_SYMBOL(cc_xa_get_order);
 #endif /* CONFIG_XARRAY_MULTI */
 
 /**
@@ -2363,8 +2389,8 @@ unlock:
  * Return: 0 on success, -ENOMEM if memory could not be allocated or
  * -EBUSY if there are no free entries in @limit.
  */
-int __cc_xa_alloc(struct xarray *xa, u32 *id, void *entry,
-		struct cc_xa_limit limit, gfp_t gfp)
+int __cc_xa_alloc(struct cc_xarray *xa, u32 *id, void *entry,
+		struct xa_limit limit, gfp_t gfp)
 {
 	int result;
 	CC_XA_STATE(xas, xa, 0);
@@ -2415,8 +2441,8 @@ int __cc_xa_alloc(struct xarray *xa, u32 *id, void *entry,
  * allocation succeeded after wrapping, -ENOMEM if memory could not be
  * allocated or -EBUSY if there are no free entries in @limit.
  */
-int __cc_xa_alloc_cyclic(struct xarray *xa, u32 *id, void *entry,
-		struct cc_xa_limit limit, u32 *next, gfp_t gfp)
+int __cc_xa_alloc_cyclic(struct cc_xarray *xa, u32 *id, void *entry,
+		struct xa_limit limit, u32 *next, gfp_t gfp)
 {
 	u32 min = limit.min;
 	int ret;
@@ -2454,7 +2480,7 @@ int __cc_xa_alloc_cyclic(struct xarray *xa, u32 *id, void *entry,
  *
  * Context: Any context.  Expects xa_lock to be held on entry.
  */
-void __cc_xa_set_mark(struct xarray *xa, unsigned long index, cc_xa_mark_t mark)
+void __cc_xa_set_mark(struct cc_xarray *xa, unsigned long index, cc_xa_mark_t mark)
 {
 	CC_XA_STATE(xas, xa, index);
 	void *entry = cc_xas_load(&xas, true);
@@ -2473,7 +2499,7 @@ void __cc_xa_set_mark(struct xarray *xa, unsigned long index, cc_xa_mark_t mark)
  *
  * Context: Any context.  Expects xa_lock to be held on entry.
  */
-void __cc_xa_clear_mark(struct xarray *xa, unsigned long index, cc_xa_mark_t mark)
+void __cc_xa_clear_mark(struct cc_xarray *xa, unsigned long index, cc_xa_mark_t mark)
 {
 	CC_XA_STATE(xas, xa, index);
 	void *entry = cc_xas_load(&xas, true);
@@ -2482,7 +2508,7 @@ void __cc_xa_clear_mark(struct xarray *xa, unsigned long index, cc_xa_mark_t mar
 		cc_xas_clear_mark(&xas, mark);
 	cc_xas_clear_xa_node(&xas);
 }
-//EXPORT_SYMBOL(__cc_xa_clear_mark);
+EXPORT_SYMBOL(__cc_xa_clear_mark);
 
 /**
  * cc_xa_get_mark() - Inquire whether this mark is set on this entry.
@@ -2496,7 +2522,7 @@ void __cc_xa_clear_mark(struct xarray *xa, unsigned long index, cc_xa_mark_t mar
  * Context: Any context.  Takes and releases the RCU lock.
  * Return: True if the entry at @index has this mark set, false if it doesn't.
  */
-bool cc_xa_get_mark(struct xarray *xa, unsigned long index, cc_xa_mark_t mark)
+bool cc_xa_get_mark(struct cc_xarray *xa, unsigned long index, cc_xa_mark_t mark)
 {
 	CC_XA_STATE(xas, xa, index);
 	void *entry;
@@ -2528,11 +2554,11 @@ bool cc_xa_get_mark(struct xarray *xa, unsigned long index, cc_xa_mark_t mark)
  *
  * Context: Process context.  Takes and releases the xa_lock.
  */
-void cc_xa_set_mark(struct xarray *xa, unsigned long index, cc_xa_mark_t mark)
+void cc_xa_set_mark(struct cc_xarray *xa, unsigned long index, cc_xa_mark_t mark)
 {
-	xa_lock(xa);
+	cc_xa_lock(xa);
 	__cc_xa_set_mark(xa, index, mark);
-	xa_unlock(xa);
+	cc_xa_unlock(xa);
 }
 //EXPORT_SYMBOL(cc_xa_set_mark);
 
@@ -2546,11 +2572,11 @@ void cc_xa_set_mark(struct xarray *xa, unsigned long index, cc_xa_mark_t mark)
  *
  * Context: Process context.  Takes and releases the xa_lock.
  */
-void cc_xa_clear_mark(struct xarray *xa, unsigned long index, cc_xa_mark_t mark)
+void cc_xa_clear_mark(struct cc_xarray *xa, unsigned long index, cc_xa_mark_t mark)
 {
-	xa_lock(xa);
+	cc_xa_lock(xa);
 	__cc_xa_clear_mark(xa, index, mark);
-	xa_unlock(xa);
+	cc_xa_unlock(xa);
 }
 //EXPORT_SYMBOL(cc_xa_clear_mark);
 
@@ -2571,7 +2597,7 @@ void cc_xa_clear_mark(struct xarray *xa, unsigned long index, cc_xa_mark_t mark)
  * Context: Any context.  Takes and releases the RCU lock.
  * Return: The entry, if found, otherwise %NULL.
  */
-void *cc_xa_find(struct xarray *xa, unsigned long *indexp,
+void *cc_xa_find(struct cc_xarray *xa, unsigned long *indexp,
 			unsigned long max, cc_xa_mark_t filter)
 {
 	CC_XA_STATE(xas, xa, *indexp);
@@ -2593,9 +2619,9 @@ void *cc_xa_find(struct xarray *xa, unsigned long *indexp,
 }
 //EXPORT_SYMBOL(cc_xa_find);
 
-static bool cc_xas_sibling(struct xa_state *xas)
+static bool cc_xas_sibling(struct cc_xa_state *xas)
 {
-	struct xa_node *node = xas->xa_node;
+	struct cc_xa_node *node = xas->xa_node;
 	unsigned long mask;
 
 	if (!node)
@@ -2606,9 +2632,9 @@ static bool cc_xas_sibling(struct xa_state *xas)
 }
 
 #if 0
-void cc_xa_garbage_collect_node(const struct xa_node *node){
+void cc_xa_garbage_collect_node(const struct cc_xa_node *node){
 	if (node -> del)
-		xa_node_free(node);
+		cc_xa_node_free(node);
 }
 #endif
 
@@ -2629,7 +2655,7 @@ void cc_xa_garbage_collect_node(const struct xa_node *node){
  * Context: Any context.  Takes and releases the RCU lock.
  * Return: The pointer, if found, otherwise %NULL.
  */
-void *cc_xa_find_after(struct xarray *xa, unsigned long *indexp,
+void *cc_xa_find_after(struct cc_xarray *xa, unsigned long *indexp,
 			unsigned long max, cc_xa_mark_t filter)
 {
 	CC_XA_STATE(xas, xa, *indexp + 1);
@@ -2661,7 +2687,7 @@ void *cc_xa_find_after(struct xarray *xa, unsigned long *indexp,
 }
 //EXPORT_SYMBOL(cc_xa_find_after);
 
-static unsigned int cc_xas_extract_present(struct xa_state *xas, void **dst,
+static unsigned int cc_xas_extract_present(struct cc_xa_state *xas, void **dst,
 			unsigned long max, unsigned int n)
 {
 	void *entry;
@@ -2681,7 +2707,7 @@ static unsigned int cc_xas_extract_present(struct xa_state *xas, void **dst,
 	return i;
 }
 
-static unsigned int cc_xas_extract_marked(struct xa_state *xas, void **dst,
+static unsigned int cc_xas_extract_marked(struct cc_xa_state *xas, void **dst,
 			unsigned long max, unsigned int n, cc_xa_mark_t mark)
 {
 	void *entry;
@@ -2729,7 +2755,7 @@ static unsigned int cc_xas_extract_marked(struct xa_state *xas, void **dst,
  * Context: Any context.  Takes and releases the RCU lock.
  * Return: The number of entries copied.
  */
-unsigned int cc_xa_extract(struct xarray *xa, void **dst, unsigned long start,
+unsigned int cc_xa_extract(struct cc_xarray *xa, void **dst, unsigned long start,
 			unsigned long max, unsigned int n, cc_xa_mark_t filter)
 {
 	CC_XA_STATE(xas, xa, start);
@@ -2753,7 +2779,7 @@ unsigned int cc_xa_extract(struct xarray *xa, void **dst, unsigned long start,
  *
  * Context: Any context.  Takes and releases the xa_lock, interrupt-safe.
  */
-void cc_xa_destroy(struct xarray *xa)
+void cc_xa_destroy(struct cc_xarray *xa)
 {
 	CC_XA_STATE(xas, xa, 0);
 	unsigned long flags;
@@ -2774,8 +2800,8 @@ void cc_xa_destroy(struct xarray *xa)
 }
 //EXPORT_SYMBOL(cc_xa_destroy);
 
-//#ifdef cc_xa_DEBUG
-void cc_xa_dump_node(const struct xa_node *node)
+//#ifdef CC_XA_DEBUG
+void cc_xa_dump_node(const struct cc_xa_node *node)
 {
 	unsigned i, j;
 
@@ -2798,6 +2824,7 @@ void cc_xa_dump_node(const struct xa_node *node)
 			node->gc_flag, node->del, node->refcnt);
 	pr_cont("\n");
 }
+EXPORT_SYMBOL(cc_xa_dump_node);
 
 void cc_xa_dump_index(unsigned long index, unsigned int shift)
 {
@@ -2821,10 +2848,10 @@ void cc_xa_dump_entry(const void *entry, unsigned long index, unsigned long shif
 			pr_cont("%px\n", entry);
 		} else {
 			unsigned long i;
-			struct xa_node *node = cc_xa_to_node(entry);
+			struct cc_xa_node *node = cc_xa_to_node(entry);
 			cc_xa_dump_node(node);
-			pr_info("Check size = %d \n", XA_CHUNK_SIZE);
-			for (i = 0; i < XA_CHUNK_SIZE; i++)
+			pr_info("Check size = %lu \n", CC_XA_CHUNK_SIZE);
+			for (i = 0; i < CC_XA_CHUNK_SIZE; i++)
 				cc_xa_dump_entry(&node->slots[i],
 				      index + (i << node->shift), node->shift);
 		}
@@ -2843,12 +2870,12 @@ void cc_xa_dump_entry(const void *entry, unsigned long index, unsigned long shif
 		pr_cont("UNKNOWN ENTRY (%px)\n", entry);
 }
 
-void cc_xa_dump(const struct xarray *xa)
+void cc_xa_dump(const struct cc_xarray *xa)
 {
 	void *entry = cc_xa_head(xa);
 	unsigned int shift = 0;
 
-	pr_info("xarray: %px head %px flags %x marks %d %d %d\n", xa, entry,
+	pr_info("cc_xarray: %px head %px flags %x marks %d %d %d\n", xa, entry,
 			xa->xa_flags, cc_xa_marked(xa, CC_XA_MARK_0),
 			cc_xa_marked(xa, CC_XA_MARK_1), cc_xa_marked(xa, CC_XA_MARK_2));
 	if (cc_xa_is_node(entry))

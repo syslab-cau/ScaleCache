@@ -59,7 +59,7 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/scext4.h>
 
-#include "cc_xarray/cc_xarray.h"
+#include <linux/cc_xarray.h>
 
 static struct scext4_lazy_init *scext4_li_info;
 static struct mutex scext4_li_mtx;
@@ -1148,12 +1148,18 @@ static void scext4_destroy_inode(struct inode *inode)
 
 static void __address_space_init_once(struct address_space *mapping)
 {
-	cc_xa_init_flags(&mapping->i_pages, XA_FLAGS_LOCK_IRQ | XA_FLAGS_ACCOUNT);
+	cc_xa_init_flags(CC_XARRAY(&mapping->i_pages), 
+			XA_FLAGS_LOCK_IRQ | XA_FLAGS_ACCOUNT);
 	init_rwsem(&mapping->i_mmap_rwsem);
 	INIT_LIST_HEAD(&mapping->private_list);
 	spin_lock_init(&mapping->private_lock);
 	spin_lock_init(&mapping->nr_lock);
 	mapping->i_mmap = RB_ROOT_CACHED;
+
+//	printk("cc_xa->xa_flags: %d, is_cc_xarray: %s\n",
+//	      mapping->i_pages.xa_flags,
+//	      cc_xa_is_ccxarray(CC_XARRAY(&mapping->i_pages)) ? "true" : "false"
+//	);
 }
 
 /*
@@ -6266,8 +6272,6 @@ extern struct page *(*pagecache_get_page_in_scext4)(struct address_space *mappin
 extern struct page *scext4_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
 	int fgp_flags, gfp_t gfp_mask);
 
-extern struct list_lru scext4_shadow_nodes;
-
 static int __init scext4_init_fs(void)
 {
 	int i, err;
@@ -6321,8 +6325,6 @@ static int __init scext4_init_fs(void)
  	/* assign wb_workfn */
  	wb_workfn_in_scext4 = &scext4_wb_workfn;
 	pagecache_get_page_in_scext4 = &scext4_pagecache_get_page;
-	
-	__list_lru_init(&scext4_shadow_nodes, true, NULL, NULL);
 
 	return 0;
 out:

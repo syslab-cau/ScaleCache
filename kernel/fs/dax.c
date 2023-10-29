@@ -479,6 +479,7 @@ static void *grab_mapping_entry(struct xa_state *xas,
 	unsigned long index = xas->xa_index;
 	bool pmd_downgrade;	/* splitting PMD entry into PTE entries? */
 	void *entry;
+	unsigned long flags;
 
 retry:
 	pmd_downgrade = false;
@@ -526,9 +527,9 @@ retry:
 		dax_disassociate_entry(entry, mapping, false);
 		xas_store(xas, NULL);	/* undo the PMD join */
 		dax_wake_entry(xas, entry, true);
-		spin_lock_irq(&mapping->nr_lock);
+		spin_lock_irqsave(&mapping->nr_lock, flags);
 		mapping->nrexceptional--;
-		spin_unlock_irq(&mapping->nr_lock);
+		spin_unlock_irqrestore(&mapping->nr_lock, flags);
 		entry = NULL;
 		xas_set(xas, index);
 	}
@@ -544,9 +545,9 @@ retry:
 		dax_lock_entry(xas, entry);
 		if (xas_error(xas))
 			goto out_unlock;
-		spin_lock_irq(&mapping->nr_lock);
+		spin_lock_irqsave(&mapping->nr_lock, flags);
 		mapping->nrexceptional++;
-		spin_unlock_irq(&mapping->nr_lock);
+		spin_unlock_irqrestore(&mapping->nr_lock, flags);
 	}
 
 out_unlock:
@@ -638,6 +639,7 @@ static int __dax_invalidate_entry(struct address_space *mapping,
 	XA_STATE(xas, &mapping->i_pages, index);
 	int ret = 0;
 	void *entry;
+	unsigned long flags;
 
 	xas_lock_irq(&xas);
 	entry = get_unlocked_entry(&xas, 0);
@@ -649,9 +651,9 @@ static int __dax_invalidate_entry(struct address_space *mapping,
 		goto out;
 	dax_disassociate_entry(entry, mapping, trunc);
 	xas_store(&xas, NULL);
-	spin_lock_irq(&mapping->nr_lock);
+	spin_lock_irqsave(&mapping->nr_lock, flags);
 	mapping->nrexceptional--;
-	spin_unlock_irq(&mapping->nr_lock);
+	spin_unlock_irqrestore(&mapping->nr_lock, flags);
 	ret = 1;
 out:
 	put_unlocked_entry(&xas, entry);
@@ -955,11 +957,16 @@ int dax_writeback_mapping_range(struct address_space *mapping,
 	void *entry;
 	int ret = 0;
 	unsigned int scanned = 0;
+	unsigned long nrexceptional, flags;
 
 	if (WARN_ON_ONCE(inode->i_blkbits != PAGE_SHIFT))
 		return -EIO;
 
-	if (!mapping->nrexceptional || wbc->sync_mode != WB_SYNC_ALL)
+	spin_lock_irqsave(&mapping->nr_lock, flags);
+	nrexceptional = mapping->nrexceptional;
+	spin_unlock_irqrestore(&mapping->nr_lock, flags);
+
+	if (!nrexceptional || wbc->sync_mode != WB_SYNC_ALL)
 		return 0;
 
 	dax_dev = dax_get_by_host(bdev->bd_disk->disk_name);

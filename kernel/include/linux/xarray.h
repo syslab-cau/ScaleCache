@@ -1284,7 +1284,6 @@ struct xa_state {
 	struct xa_node *xa_node;	/* Private, do not access directly! */
 	struct xa_node *xa_alloc;
 	xa_update_node_t xa_update;
-	struct list_head node_trace;	/* node trace from the root node */
 };
 
 /*
@@ -1316,8 +1315,7 @@ struct xa_state {
  * Declare and initialise an xa_state on the stack.
  */
 #define XA_STATE(name, array, index)				\
-	struct xa_state name = __XA_STATE(array, index, 0, 0);	\
-	INIT_LIST_HEAD(&(name).node_trace)
+	struct xa_state name = __XA_STATE(array, index, 0, 0)
 
 /**
  * XA_STATE_ORDER() - Declare an XArray operation state.
@@ -1334,8 +1332,7 @@ struct xa_state {
 	struct xa_state name = __XA_STATE(array,		\
 			(index >> order) << order,		\
 			order - (order % XA_CHUNK_SHIFT),	\
-			(1U << (order % XA_CHUNK_SHIFT)) - 1);	\
-	INIT_LIST_HEAD(&(name).node_trace)
+			(1U << (order % XA_CHUNK_SHIFT)) - 1)
 
 #define xas_marked(xas, mark)	xa_marked((xas)->xa, (mark))
 #define xas_trylock(xas)	xa_trylock((xas)->xa)

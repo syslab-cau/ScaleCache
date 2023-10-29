@@ -2116,12 +2116,17 @@ void __init page_writeback_init(void)
  * dirty pages in the file (thus it is important for this function to be quick
  * so that it can tag pages faster than a dirtying process can create them).
  */
+void cc_tag_pages_for_writeback(struct address_space *mapping,
+			     pgoff_t start, pgoff_t end);
 void tag_pages_for_writeback(struct address_space *mapping,
 			     pgoff_t start, pgoff_t end)
 {
 	XA_STATE(xas, &mapping->i_pages, start);
 	unsigned int tagged = 0;
 	void *page;
+
+	if (cc_xas_is_ccxarray(&xas))
+		return cc_tag_pages_for_writeback(mapping, start, end);
 
 	xas_lock_irq(&xas);
 	xas_for_each_marked(&xas, page, end, PAGECACHE_TAG_DIRTY) {
@@ -2137,6 +2142,33 @@ void tag_pages_for_writeback(struct address_space *mapping,
 	xas_unlock_irq(&xas);
 }
 EXPORT_SYMBOL(tag_pages_for_writeback);
+
+void cc_tag_pages_for_writeback(struct address_space *mapping,
+			     pgoff_t start, pgoff_t end)
+{
+	CC_XA_STATE(xas, CC_XARRAY(&mapping->i_pages), start);
+	unsigned int tagged = 0;
+	void *page;
+
+	if (!cc_xas_is_ccxarray(&xas))
+		return tag_pages_for_writeback(mapping, start, end);
+
+	//TODO: Can we remove this lock? Is this lock unnecessary?
+	xas_lock_irq(&xas);
+	cc_xas_for_each_marked(&xas, page, end, PAGECACHE_TAG_DIRTY) {
+		cc_xas_set_mark(&xas, PAGECACHE_TAG_TOWRITE); // TODO: make this as lock-free!!
+		if (++tagged % XA_CHECK_SCHED)
+			continue;
+
+		cc_xas_pause(&xas);
+		xas_unlock_irq(&xas);
+		cond_resched();
+		xas_lock_irq(&xas);
+	}
+	xas_unlock_irq(&xas);
+	cc_xas_clear_xa_node(&xas);
+}
+EXPORT_SYMBOL(cc_tag_pages_for_writeback);
 
 /**
  * write_cache_pages - walk the list of dirty pages of the given address space and write all of them.

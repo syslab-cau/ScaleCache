@@ -521,16 +521,17 @@ EXPORT_SYMBOL(__remove_inode_hash);
 
 void clear_inode(struct inode *inode)
 {
+	unsigned long flags;
 	/*
 	 * We have to cycle the i_pages lock here because reclaim can be in the
 	 * process of removing the last page (in __delete_from_page_cache())
 	 * and we must not free the mapping under it.
 	 */
 	xa_lock_irq(&inode->i_data.i_pages);
-	spin_lock_irq(&inode->i_data.nr_lock);
-	//BUG_ON(inode->i_data.nrpages);
-	//BUG_ON(inode->i_data.nrexceptional);
-	spin_unlock_irq(&inode->i_data.nr_lock);
+	spin_lock_irqsave(&inode->i_data.nr_lock, flags);
+	BUG_ON(inode->i_data.nrpages);
+	BUG_ON(inode->i_data.nrexceptional);
+	spin_unlock_irqrestore(&inode->i_data.nr_lock, flags);
 	xa_unlock_irq(&inode->i_data.i_pages);
 	BUG_ON(!list_empty(&inode->i_data.private_list));
 	BUG_ON(!(inode->i_state & I_FREEING));
@@ -737,6 +738,8 @@ static enum lru_status inode_lru_isolate(struct list_head *item,
 {
 	struct list_head *freeable = arg;
 	struct inode	*inode = container_of(item, struct inode, i_lru);
+	unsigned long nrpages;
+	unsigned long flags;
 
 	/*
 	 * we are inverting the lru lock/inode->i_lock here, so use a trylock.
@@ -763,8 +766,12 @@ static enum lru_status inode_lru_isolate(struct list_head *item,
 		spin_unlock(&inode->i_lock);
 		return LRU_ROTATE;
 	}
+	
+	spin_lock_irqsave(&inode->i_data.nr_lock, flags);
+	nrpages =  inode->i_data.nrpages;
+	spin_unlock_irqrestore(&inode->i_data.nr_lock, flags);
 
-	if (inode_has_buffers(inode) || inode->i_data.nrpages) {
+	if (inode_has_buffers(inode) || nrpages) {
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
 		spin_unlock(lru_lock);

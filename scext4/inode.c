@@ -248,7 +248,10 @@ void scext4_evict_inode(struct inode *inode)
 		}
 		scext4_truncate_inode_pages_final(&inode->i_data);
 
-		printk("Inode has link!! \n");
+		//printk("Inode has link!! cc_xa->xa_flags: %d, is_cc_xarray: %s\n",
+		//      inode->i_data.i_pages.xa_flags,
+		//      cc_xa_is_ccxarray(CC_XARRAY(&inode->i_data.i_pages)) ? "true" : "false"
+		//);
 		goto no_delete;
 	}
 
@@ -2737,7 +2740,7 @@ out:
 	return err;
 }
 
-void scext4_tag_pages_for_writeback(struct address_space *mapping,
+void cc_tag_pages_for_writeback(struct address_space *mapping,
 			     pgoff_t start, pgoff_t end);
 
 static int scext4_writepages(struct address_space *mapping,
@@ -2755,6 +2758,8 @@ static int scext4_writepages(struct address_space *mapping,
 	bool done;
 	struct blk_plug plug;
 	bool give_up_on_write = false;
+	unsigned long nrpages;
+	unsigned long flags;
 
 	if (unlikely(scext4_forced_shutdown(SCEXT4_SB(inode->i_sb))))
 		return -EIO;
@@ -2762,12 +2767,16 @@ static int scext4_writepages(struct address_space *mapping,
 	percpu_down_read(&sbi->s_writepages_rwsem);
 	//trace_scext4_writepages(inode, wbc);
 
+	spin_lock_irqsave(&mapping->nr_lock, flags);
+	nrpages = mapping->nrpages;
+	spin_unlock_irqrestore(&mapping->nr_lock, flags);
+
 	/*
 	 * No pages to write? This is mainly a kludge to avoid starting
 	 * a transaction for special inodes like journal inode on last iput()
 	 * because that could violate lock ordering on umount
 	 */
-	if (!mapping->nrpages || !mapping_tagged(mapping, PAGECACHE_TAG_DIRTY))
+	if (!nrpages || !mapping_tagged(mapping, PAGECACHE_TAG_DIRTY))
 		goto out_writepages;
 
 	/* ignore journal */
@@ -2840,7 +2849,7 @@ static int scext4_writepages(struct address_space *mapping,
 	scext4_io_submit_init(&mpd.io_submit, wbc);
 retry:
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
-		scext4_tag_pages_for_writeback(mapping, mpd.first_page, mpd.last_page);
+		cc_tag_pages_for_writeback(mapping, mpd.first_page, mpd.last_page);
 	done = false;
 	blk_start_plug(&plug);
 
@@ -3973,10 +3982,6 @@ int scext4_generic_error_remove_page(struct address_space *mapping, struct page 
 struct page *scext4_pagecache_get_page(struct address_space *mapping, pgoff_t offset,
 	int fgp_flags, gfp_t gfp_mask);
 
-unsigned scext4_find_get_entries(struct address_space *mapping,
-			  pgoff_t start, unsigned int nr_entries,
-			  struct page **entries, pgoff_t *indices);
-
 static const struct address_space_operations scext4_aops = {
 	.readpage		= scext4_readpage,
 	.readpages		= scext4_readpages,
@@ -3993,7 +3998,6 @@ static const struct address_space_operations scext4_aops = {
 	.is_partially_uptodate  = block_is_partially_uptodate,
 	.error_remove_page	= scext4_generic_error_remove_page,
 	.custom_pagecache_get_page = scext4_pagecache_get_page,
-	.custom_find_get_entries = scext4_find_get_entries,
 };
 
 static const struct address_space_operations scext4_journalled_aops = {
@@ -4011,7 +4015,6 @@ static const struct address_space_operations scext4_journalled_aops = {
 	.is_partially_uptodate  = block_is_partially_uptodate,
 	.error_remove_page	= scext4_generic_error_remove_page,
 	.custom_pagecache_get_page = scext4_pagecache_get_page,
-	.custom_find_get_entries = scext4_find_get_entries,
 };
 
 static const struct address_space_operations scext4_da_aops = {
@@ -4030,7 +4033,6 @@ static const struct address_space_operations scext4_da_aops = {
 	.is_partially_uptodate  = block_is_partially_uptodate,
 	.error_remove_page	= scext4_generic_error_remove_page,
 	.custom_pagecache_get_page = scext4_pagecache_get_page,
-	.custom_find_get_entries = scext4_find_get_entries,
 };
 
 static const struct address_space_operations scext4_dax_aops = {
@@ -4040,7 +4042,6 @@ static const struct address_space_operations scext4_dax_aops = {
 	.bmap			= scext4_bmap,
 	.invalidatepage		= noop_invalidatepage,
 	.custom_pagecache_get_page = scext4_pagecache_get_page,
-	.custom_find_get_entries = scext4_find_get_entries,
 };
 
 void scext4_set_aops(struct inode *inode)

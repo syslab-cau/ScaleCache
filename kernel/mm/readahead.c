@@ -152,6 +152,9 @@ out:
  *
  * Returns the number of pages requested, or the maximum amount of I/O allowed.
  */
+unsigned int __cc_do_page_cache_readahead(struct address_space *mapping,
+		struct file *filp, pgoff_t offset, unsigned long nr_to_read,
+		unsigned long lookahead_size);
 unsigned int __do_page_cache_readahead(struct address_space *mapping,
 		struct file *filp, pgoff_t offset, unsigned long nr_to_read,
 		unsigned long lookahead_size)
@@ -164,6 +167,9 @@ unsigned int __do_page_cache_readahead(struct address_space *mapping,
 	unsigned int nr_pages = 0;
 	loff_t isize = i_size_read(inode);
 	gfp_t gfp_mask = readahead_gfp_mask(mapping);
+
+	if (cc_xa_is_ccxarray(CC_XARRAY(&mapping->i_pages)))
+		return __cc_do_page_cache_readahead(mapping, filp, offset, nr_to_read, lookahead_size);
 
 	if (isize == 0)
 		goto out;
@@ -215,6 +221,73 @@ out:
 	return nr_pages;
 }
 EXPORT_SYMBOL(__do_page_cache_readahead);
+
+unsigned int __cc_do_page_cache_readahead(struct address_space *mapping,
+		struct file *filp, pgoff_t offset, unsigned long nr_to_read,
+		unsigned long lookahead_size)
+{
+	struct inode *inode = mapping->host;
+	struct page *page;
+	unsigned long end_index;	/* The last page we want to read */
+	LIST_HEAD(page_pool);
+	int page_idx;
+	unsigned int nr_pages = 0;
+	loff_t isize = i_size_read(inode);
+	gfp_t gfp_mask = readahead_gfp_mask(mapping);
+
+	if (!cc_xa_is_ccxarray(CC_XARRAY(&mapping->i_pages)))
+		return __do_page_cache_readahead(mapping, filp, offset, nr_to_read, lookahead_size);
+
+	if (isize == 0)
+		goto out;
+
+	end_index = ((isize - 1) >> PAGE_SHIFT);
+
+	/*
+	 * Preallocate as many pages as we will need.
+	 */
+	for (page_idx = 0; page_idx < nr_to_read; page_idx++) {
+		pgoff_t page_offset = offset + page_idx;
+
+		if (page_offset > end_index)
+			break;
+
+		page = cc_xa_load(CC_XARRAY(&mapping->i_pages), page_offset);
+		if (page && !cc_xa_is_value(page)) {
+			/*
+			 * Page already present?  Kick off the current batch of
+			 * contiguous pages before continuing with the next
+			 * batch.
+			 */
+			if (nr_pages)
+				read_pages(mapping, filp, &page_pool, nr_pages,
+						gfp_mask);
+			nr_pages = 0;
+			continue;
+		}
+
+		page = __page_cache_alloc(gfp_mask);
+		if (!page)
+			break;
+		page->index = page_offset;
+		list_add(&page->lru, &page_pool);
+		if (page_idx == nr_to_read - lookahead_size)
+			SetPageReadahead(page);
+		nr_pages++;
+	}
+
+	/*
+	 * Now start the IO.  We ignore I/O errors - if the page is not
+	 * uptodate then the caller will launch readpage again, and
+	 * will then handle the error.
+	 */
+	if (nr_pages)
+		read_pages(mapping, filp, &page_pool, nr_pages, gfp_mask);
+	BUG_ON(!list_empty(&page_pool));
+out:
+	return nr_pages;
+}
+EXPORT_SYMBOL(__cc_do_page_cache_readahead);
 
 /*
  * Chunk the readahead into 2 megabyte units, so that we don't pin too much

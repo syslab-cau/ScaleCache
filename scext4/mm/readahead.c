@@ -25,7 +25,7 @@
 
 #include "internal.h"
 
-#include "../cc_xarray/cc_xarray.h"
+#include <linux/cc_xarray.h>
 
 /*
  * Initialise a struct file's readahead state.  Assumes that the caller has
@@ -148,80 +148,6 @@ out:
 	return ret;
 }
 
-struct page *__scext4_page_cache_alloc(gfp_t gfp);
-
-/*
- * __do_page_cache_readahead() actually reads a chunk of disk.  It allocates
- * the pages first, then submits them for I/O. This avoids the very bad
- * behaviour which would occur if page allocations are causing VM writeback.
- * We really don't want to intermingle reads and writes like that.
- *
- * Returns the number of pages requested, or the maximum amount of I/O allowed.
- */
-unsigned int __scext4_do_page_cache_readahead(struct address_space *mapping,
-		struct file *filp, pgoff_t offset, unsigned long nr_to_read,
-		unsigned long lookahead_size)
-{
-	struct inode *inode = mapping->host;
-	struct page *page;
-	unsigned long end_index;	/* The last page we want to read */
-	LIST_HEAD(page_pool);
-	int page_idx;
-	unsigned int nr_pages = 0;
-	loff_t isize = i_size_read(inode);
-	gfp_t gfp_mask = readahead_gfp_mask(mapping);
-
-	if (isize == 0)
-		goto out;
-
-	end_index = ((isize - 1) >> PAGE_SHIFT);
-
-	/*
-	 * Preallocate as many pages as we will need.
-	 */
-	for (page_idx = 0; page_idx < nr_to_read; page_idx++) {
-		pgoff_t page_offset = offset + page_idx;
-
-		if (page_offset > end_index)
-			break;
-
-		page = cc_xa_load(&mapping->i_pages, page_offset);
-		if (page && !cc_xa_is_value(page)) {
-			/*
-			 * Page already present?  Kick off the current batch of
-			 * contiguous pages before continuing with the next
-			 * batch.
-			 */
-			if (nr_pages)
-				read_pages(mapping, filp, &page_pool, nr_pages,
-						gfp_mask);
-			nr_pages = 0;
-			continue;
-		}
-
-		page = __scext4_page_cache_alloc(gfp_mask);
-		if (!page)
-			break;
-		page->index = page_offset;
-		list_add(&page->lru, &page_pool);
-		if (page_idx == nr_to_read - lookahead_size)
-			SetPageReadahead(page);
-		nr_pages++;
-	}
-
-	/*
-	 * Now start the IO.  We ignore I/O errors - if the page is not
-	 * uptodate then the caller will launch readpage again, and
-	 * will then handle the error.
-	 */
-	if (nr_pages)
-		read_pages(mapping, filp, &page_pool, nr_pages, gfp_mask);
-	BUG_ON(!list_empty(&page_pool));
-out:
-	return nr_pages;
-}
-//EXPORT_SYMBOL(__do_page_cache_readahead);
-
 /*
  * Chunk the readahead into 2 megabyte units, so that we don't pin too much
  * memory at once.
@@ -247,7 +173,7 @@ int force_page_cache_readahead(struct address_space *mapping, struct file *filp,
 
 		if (this_chunk > nr_to_read)
 			this_chunk = nr_to_read;
-		__scext4_do_page_cache_readahead(mapping, filp, offset, this_chunk, 0);
+		__cc_do_page_cache_readahead(mapping, filp, offset, this_chunk, 0);
 
 		offset += this_chunk;
 		nr_to_read -= this_chunk;
@@ -330,7 +256,7 @@ static unsigned long get_next_ra_size(struct file_ra_state *ra,
  * it approaches max_readhead.
  */
 
-pgoff_t scext4_page_cache_prev_miss(struct address_space *mapping,
+pgoff_t cc_page_cache_prev_miss(struct address_space *mapping,
 			     pgoff_t index, unsigned long max_scan);
 
 /*
@@ -345,7 +271,7 @@ static pgoff_t count_history_pages(struct address_space *mapping,
 	pgoff_t head;
 
 	rcu_read_lock();
-	head = scext4_page_cache_prev_miss(mapping, offset - 1, max);
+	head = cc_page_cache_prev_miss(mapping, offset - 1, max);
 	rcu_read_unlock();
 
 	return offset - 1 - head;
@@ -385,7 +311,7 @@ static int try_context_readahead(struct address_space *mapping,
 	return 1;
 }
 
-pgoff_t scext4_page_cache_next_miss(struct address_space *mapping,
+pgoff_t cc_page_cache_next_miss(struct address_space *mapping,
 			     pgoff_t index, unsigned long max_scan);
 
 /*
@@ -437,7 +363,7 @@ ondemand_readahead(struct address_space *mapping,
 		pgoff_t start;
 
 		rcu_read_lock();
-		start = scext4_page_cache_next_miss(mapping, offset + 1, max_pages);
+		start = cc_page_cache_next_miss(mapping, offset + 1, max_pages);
 		rcu_read_unlock();
 
 		if (!start || start - offset > max_pages)
@@ -477,7 +403,7 @@ ondemand_readahead(struct address_space *mapping,
 	 * standalone, small random read
 	 * Read as is, and do not pollute the readahead state.
 	 */
-	return __scext4_do_page_cache_readahead(mapping, filp, offset, req_size, 0);
+	return __cc_do_page_cache_readahead(mapping, filp, offset, req_size, 0);
 
 initial_readahead:
 	ra->start = offset;

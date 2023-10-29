@@ -49,7 +49,7 @@ void unmap_page_range(struct mmu_gather *tlb,
 			     unsigned long addr, unsigned long end,
 			     struct zap_details *details);
 
-extern unsigned int __scext4_do_page_cache_readahead(struct address_space *mapping,
+extern unsigned int __cc_do_page_cache_readahead(struct address_space *mapping,
 		struct file *filp, pgoff_t offset, unsigned long nr_to_read,
 		unsigned long lookahead_size);
 
@@ -59,7 +59,7 @@ extern unsigned int __scext4_do_page_cache_readahead(struct address_space *mappi
 static inline unsigned long ra_submit(struct file_ra_state *ra,
 		struct address_space *mapping, struct file *filp)
 {
-	return __scext4_do_page_cache_readahead(mapping, filp,
+	return __cc_do_page_cache_readahead(mapping, filp,
 					ra->start, ra->size, ra->async_size);
 }
 

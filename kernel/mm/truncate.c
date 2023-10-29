@@ -31,17 +31,52 @@
  * itself locked.  These unlocked entries need verification under the tree
  * lock.
  */
+inline void __cc_clear_shadow_entry(struct address_space *mapping,
+				pgoff_t index, void *entry);
 static inline void __clear_shadow_entry(struct address_space *mapping,
 				pgoff_t index, void *entry)
 {
 	XA_STATE(xas, &mapping->i_pages, index);
+	unsigned long flags;
+
+	if (cc_xas_is_ccxarray(&xas))
+		return __cc_clear_shadow_entry(mapping, index, entry);
 
 	xas_set_update(&xas, workingset_update_node);
 	if (xas_load(&xas) != entry)
 		return;
 	xas_store(&xas, NULL);
+	spin_lock_irqsave(&mapping->nr_lock, flags);
 	mapping->nrexceptional--;
+	spin_unlock_irqrestore(&mapping->nr_lock, flags);
 }
+
+inline void __cc_clear_shadow_entry(struct address_space *mapping,
+				pgoff_t index, void *entry)
+{
+	CC_XA_STATE(xas, CC_XARRAY(&mapping->i_pages), index);
+	unsigned long flags;
+
+	if (!cc_xas_is_ccxarray(&xas))
+		return __clear_shadow_entry(mapping, index, entry);
+
+	cc_xas_set_update(&xas, cc_workingset_update_node);
+	if (cc_xas_load(&xas, false) != entry) {
+		cc_xas_rewind_refcnt(&xas);
+		cc_xas_clear_xa_node(&xas);
+		return;
+	}
+
+	CC_XA_NODE_BUG_ON(xas.xa_node, __atomic_load_n(&xas.xa_node->refcnt, __ATOMIC_SEQ_CST) == 64);
+
+	cc_xas_store(&xas, NULL);
+	cc_xas_rewind_refcnt(&xas);
+	cc_xas_clear_xa_node(&xas);
+	spin_lock_irqsave(&mapping->nr_lock, flags);
+	mapping->nrexceptional--;
+	spin_unlock_irqrestore(&mapping->nr_lock, flags);
+}
+EXPORT_SYMBOL(__cc_clear_shadow_entry);
 
 static void clear_shadow_entry(struct address_space *mapping, pgoff_t index,
 			       void *entry)
@@ -296,8 +331,17 @@ void truncate_inode_pages_range(struct address_space *mapping,
 	pgoff_t		indices[PAGEVEC_SIZE];
 	pgoff_t		index;
 	int		i;
+	unsigned long	nrexceptional;
+	unsigned long	nrpages;
+	unsigned long	flags;
 
-	if (mapping->nrpages == 0 && mapping->nrexceptional == 0)
+	spin_lock_irqsave(&mapping->nr_lock, flags);
+	nrpages = mapping->nrpages;
+	smp_rmb();
+	nrexceptional = mapping->nrexceptional;
+	spin_unlock_irqrestore(&mapping->nr_lock, flags);
+
+	if (nrpages == 0 && nrexceptional == 0)
 		goto out;
 
 	/* Offsets within partial pages */
@@ -487,6 +531,7 @@ void truncate_inode_pages_final(struct address_space *mapping)
 {
 	unsigned long nrexceptional;
 	unsigned long nrpages;
+	unsigned long flags;
 
 	/*
 	 * Page reclaim can not participate in regular inode lifetime
@@ -502,9 +547,11 @@ void truncate_inode_pages_final(struct address_space *mapping)
 	 * nrexceptional first, then decreases nrpages.  Make sure we see
 	 * this in the right order or we might miss an entry.
 	 */
+	spin_lock_irqsave(&mapping->nr_lock, flags);
 	nrpages = mapping->nrpages;
 	smp_rmb();
 	nrexceptional = mapping->nrexceptional;
+	spin_unlock_irqrestore(&mapping->nr_lock, flags);
 
 	if (nrpages || nrexceptional) {
 		/*
@@ -514,8 +561,8 @@ void truncate_inode_pages_final(struct address_space *mapping)
 		 * completed before starting the final truncate.
 		 */
 		xa_lock_irq(&mapping->i_pages);
-		spin_lock_irq(&mapping->nr_lock);
-		spin_unlock_irq(&mapping->nr_lock);
+		spin_lock_irqsave(&mapping->nr_lock, flags);
+		spin_unlock_irqrestore(&mapping->nr_lock, flags);
 		xa_unlock_irq(&mapping->i_pages);
 	}
 
@@ -690,8 +737,16 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
 	int ret = 0;
 	int ret2 = 0;
 	int did_range_unmap = 0;
+	unsigned long nrexceptional, nrpages;
+	unsigned long flags;
 
-	if (mapping->nrpages == 0 && mapping->nrexceptional == 0)
+	spin_lock_irqsave(&mapping->nr_lock, flags);
+	nrpages = mapping->nrpages;
+	smp_rmb();
+	nrexceptional = mapping->nrexceptional;
+	spin_unlock_irqrestore(&mapping->nr_lock, flags);
+
+	if (nrpages == 0 && nrexceptional == 0)
 		goto out;
 
 	pagevec_init(&pvec);

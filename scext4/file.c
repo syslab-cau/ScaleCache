@@ -34,6 +34,8 @@
 #include "xattr.h"
 #include "acl.h"
 
+#include <linux/cc_xarray.h>
+
 ssize_t __scext4_generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from);
 ssize_t
 scext4_generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter);
@@ -100,6 +102,7 @@ static int scext4_release_file(struct inode *inode, struct file *filp)
 	{
 		down_write(&SCEXT4_I(inode)->i_data_sem);
 		scext4_discard_preallocations(inode);
+		cc_xa_garbage_collector(CC_XARRAY(&inode->i_mapping->i_pages));
 		up_write(&SCEXT4_I(inode)->i_data_sem);
 	}
 	if (is_dx(inode) && filp->private_data)
@@ -367,12 +370,12 @@ static const struct vm_operations_struct scext4_dax_vm_ops = {
 #define scext4_dax_vm_ops	scext4_file_vm_ops
 #endif
 
-void scext4_filemap_map_pages(struct vm_fault *vmf,
+void cc_filemap_map_pages(struct vm_fault *vmf,
 		pgoff_t start_pgoff, pgoff_t end_pgoff);
 
 static const struct vm_operations_struct scext4_file_vm_ops = {
 	.fault		= scext4_filemap_fault,
-	.map_pages	= scext4_filemap_map_pages,
+	.map_pages	= cc_filemap_map_pages,
 	.page_mkwrite   = scext4_page_mkwrite,
 };
 
@@ -519,7 +522,6 @@ loff_t scext4_llseek(struct file *file, loff_t offset, int whence)
 	return vfs_setpos(file, offset, maxbytes);
 }
 
-extern void cc_xa_garbage_collector(struct xarray *xa);
 
 const struct file_operations scext4_file_operations = {
 	.llseek		= scext4_llseek,
@@ -538,7 +540,6 @@ const struct file_operations scext4_file_operations = {
 	.splice_read	= generic_file_splice_read,
 	.splice_write	= iter_file_splice_write,
 	.fallocate	= scext4_fallocate,
-	.page_gc	= cc_xa_garbage_collector,
 };
 
 const struct inode_operations scext4_file_inode_operations = {

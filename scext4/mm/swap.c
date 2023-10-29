@@ -974,7 +974,7 @@ EXPORT_SYMBOL(__pagevec_lru_add);
 
 #endif
 
-extern unsigned scext4_find_get_entries(struct address_space *mapping,
+extern unsigned cc_find_get_entries(struct address_space *mapping,
 			  pgoff_t start, unsigned int nr_entries,
 			  struct page **entries, pgoff_t *indices);
 
@@ -1003,7 +1003,7 @@ unsigned pagevec_lookup_entries(struct pagevec *pvec,
 				pgoff_t start, unsigned nr_entries,
 				pgoff_t *indices)
 {
-	pvec->nr = scext4_find_get_entries(mapping, start, nr_entries,
+	pvec->nr = cc_find_get_entries(mapping, start, nr_entries,
 				    pvec->pages, indices);
 	return pagevec_count(pvec);
 }
@@ -1029,7 +1029,7 @@ void pagevec_remove_exceptionals(struct pagevec *pvec)
 	pvec->nr = j;
 }
 
-extern unsigned scext4_find_get_pages_range(struct address_space *mapping, pgoff_t *start,
+extern unsigned cc_find_get_pages_range(struct address_space *mapping, pgoff_t *start,
 			      pgoff_t end, unsigned int nr_pages,
 			      struct page **pages);
 /**
@@ -1055,13 +1055,13 @@ extern unsigned scext4_find_get_pages_range(struct address_space *mapping, pgoff
 unsigned scext4_pagevec_lookup_range(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *start, pgoff_t end)
 {
-	pvec->nr = scext4_find_get_pages_range(mapping, start, end, PAGEVEC_SIZE,
+	pvec->nr = cc_find_get_pages_range(mapping, start, end, PAGEVEC_SIZE,
 					pvec->pages);
 	return pagevec_count(pvec);
 }
 //EXPORT_SYMBOL(pagevec_lookup_range);
 
-extern unsigned scext4_find_get_pages_range_tag(struct address_space *mapping, pgoff_t *index,
+extern unsigned cc_find_get_pages_range_tag(struct address_space *mapping, pgoff_t *index,
 			pgoff_t end, xa_mark_t tag, unsigned int nr_pages,
 			struct page **pages);
 
@@ -1069,7 +1069,7 @@ unsigned scext4_pagevec_lookup_range_tag(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *index, pgoff_t end,
 		xa_mark_t tag)
 {
-	pvec->nr = scext4_find_get_pages_range_tag(mapping, index, end, tag,
+	pvec->nr = cc_find_get_pages_range_tag(mapping, index, end, tag,
 					PAGEVEC_SIZE, pvec->pages);
 	return pagevec_count(pvec);
 }
@@ -1079,7 +1079,7 @@ unsigned scext4_pagevec_lookup_range_nr_tag(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *index, pgoff_t end,
 		xa_mark_t tag, unsigned max_pages)
 {
-	pvec->nr = scext4_find_get_pages_range_tag(mapping, index, end, tag,
+	pvec->nr = cc_find_get_pages_range_tag(mapping, index, end, tag,
 		min_t(unsigned int, max_pages, PAGEVEC_SIZE), pvec->pages);
 	return pagevec_count(pvec);
 }
