@@ -768,7 +768,7 @@ static enum lru_status inode_lru_isolate(struct list_head *item,
 	}
 	
 	spin_lock_irqsave(&inode->i_data.nr_lock, flags);
-	nrpages =  inode->i_data.nrpages;
+	nrpages = inode->i_data.nrpages;
 	spin_unlock_irqrestore(&inode->i_data.nr_lock, flags);
 
 	if (inode_has_buffers(inode) || nrpages) {

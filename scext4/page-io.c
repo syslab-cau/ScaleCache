@@ -107,7 +107,7 @@ static void scext4_finish_bio(struct bio *bio)
 		local_irq_restore(flags);
 		if (!under_io) {
 			fscrypt_free_bounce_page(bounce_page);
-			end_page_writeback(page);
+			cc_end_page_writeback(page);
 		}
 	}
 }
@@ -419,9 +419,9 @@ int scext4_bio_write_page(struct scext4_io_submit *io,
 	BUG_ON(PageWriteback(page));
 
 	if (keep_towrite)
-		set_page_writeback_keepwrite(page);
+		cc_set_page_writeback_keepwrite(page);
 	else
-		set_page_writeback(page);
+		cc_set_page_writeback(page);
 	ClearPageError(page);
 
 	/*
@@ -536,6 +536,6 @@ int scext4_bio_write_page(struct scext4_io_submit *io,
 	unlock_page(page);
 	/* Nothing submitted - we have to end page writeback */
 	if (!nr_submitted)
-		end_page_writeback(page);
+		cc_end_page_writeback(page);
 	return ret;
 }

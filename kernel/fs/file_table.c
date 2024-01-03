@@ -303,16 +303,9 @@ static void delayed_fput(struct work_struct *unused)
 {
 	struct llist_node *node = llist_del_all(&delayed_fput_list);
 	struct file *f, *t;
-	struct xarray *page_cache;
 
-	llist_for_each_entry_safe(f, t, node, f_u.fu_llist) {
+	llist_for_each_entry_safe(f, t, node, f_u.fu_llist)
 		__fput(f);
-
-		//if (f->f_op->page_gc) {
-		//	page_cache = &f->f_inode->i_mapping->i_pages;
-		//	f->f_op->page_gc(page_cache);
-		//}
-	}
 }
 
 static void ____fput(struct callback_head *work)

@@ -416,6 +416,9 @@ int migrate_page_move_mapping(struct address_space *mapping,
 
 		return MIGRATEPAGE_SUCCESS;
 	}
+	
+	if (cc_xas_is_ccxarray(&xas))
+		return cc_migrate_page_move_mapping(mapping, newpage, page, extra_count);
 
 	oldzone = page_zone(page);
 	newzone = page_zone(newpage);
@@ -505,6 +508,124 @@ int migrate_page_move_mapping(struct address_space *mapping,
 }
 EXPORT_SYMBOL(migrate_page_move_mapping);
 
+int cc_migrate_page_move_mapping(struct address_space *mapping,
+		struct page *newpage, struct page *page, int extra_count)
+{
+	CC_XA_STATE(xas, CC_XARRAY(&mapping->i_pages), page_index(page));
+	struct zone *oldzone, *newzone;
+	int dirty;
+	int expected_count = expected_page_refs(mapping, page) + extra_count;
+
+	if (!mapping) {
+		/* Anonymous page without mapping */
+		if (page_count(page) != expected_count)
+			return -EAGAIN;
+
+		/* No turning back from here */
+		newpage->index = page->index;
+		newpage->mapping = page->mapping;
+		if (PageSwapBacked(page))
+			__SetPageSwapBacked(newpage);
+
+		return MIGRATEPAGE_SUCCESS;
+	}
+
+	if (!cc_xas_is_ccxarray(&xas))
+		return migrate_page_move_mapping(mapping, newpage, page, extra_count);
+
+	oldzone = page_zone(page);
+	newzone = page_zone(newpage);
+
+	cc_xas_lock_irq(&xas);
+	if (page_count(page) != expected_count || cc_xas_load(&xas, false) != page) {
+		cc_xas_rewind_refcnt(&xas);
+		cc_xas_clear_xa_node(&xas);
+		cc_xas_unlock_irq(&xas);
+		return -EAGAIN;
+	}
+
+	if (!page_ref_freeze(page, expected_count)) {
+		cc_xas_rewind_refcnt(&xas);
+		cc_xas_clear_xa_node(&xas);
+		cc_xas_unlock_irq(&xas);
+		return -EAGAIN;
+	}
+
+	/*
+	 * Now we know that no one else is looking at the page:
+	 * no turning back from here.
+	 */
+	newpage->index = page->index;
+	newpage->mapping = page->mapping;
+	page_ref_add(newpage, hpage_nr_pages(page)); /* add cache reference */
+	if (PageSwapBacked(page)) {
+		__SetPageSwapBacked(newpage);
+		if (PageSwapCache(page)) {
+			SetPageSwapCache(newpage);
+			set_page_private(newpage, page_private(page));
+		}
+	} else {
+		VM_BUG_ON_PAGE(PageSwapCache(page), page);
+	}
+
+	/* Move dirty while page refs frozen and newpage not yet exposed */
+	dirty = PageDirty(page);
+	if (dirty) {
+		ClearPageDirty(page);
+		SetPageDirty(newpage);
+	}
+
+	cc_xas_store(&xas, newpage);
+	if (PageTransHuge(page)) {
+		int i;
+
+		for (i = 1; i < HPAGE_PMD_NR; i++) {
+			cc_xas_next(&xas);
+			cc_xas_store(&xas, newpage);
+		}
+	}
+	cc_xas_rewind_refcnt(&xas);
+	cc_xas_clear_xa_node(&xas);
+
+	/*
+	 * Drop cache reference from old page by unfreezing
+	 * to one less reference.
+	 * We know this isn't the last reference.
+	 */
+	page_ref_unfreeze(page, expected_count - hpage_nr_pages(page));
+
+	cc_xas_unlock(&xas);
+	/* Leave irq disabled to prevent preemption while updating stats */
+
+	/*
+	 * If moved to a different zone then also account
+	 * the page for that zone. Other VM counters will be
+	 * taken care of when we establish references to the
+	 * new page and drop references to the old page.
+	 *
+	 * Note that anonymous pages are accounted for
+	 * via NR_FILE_PAGES and NR_ANON_MAPPED if they
+	 * are mapped to swap space.
+	 */
+	if (newzone != oldzone) {
+		__dec_node_state(oldzone->zone_pgdat, NR_FILE_PAGES);
+		__inc_node_state(newzone->zone_pgdat, NR_FILE_PAGES);
+		if (PageSwapBacked(page) && !PageSwapCache(page)) {
+			__dec_node_state(oldzone->zone_pgdat, NR_SHMEM);
+			__inc_node_state(newzone->zone_pgdat, NR_SHMEM);
+		}
+		if (dirty && mapping_cap_account_dirty(mapping)) {
+			__dec_node_state(oldzone->zone_pgdat, NR_FILE_DIRTY);
+			__dec_zone_state(oldzone, NR_ZONE_WRITE_PENDING);
+			__inc_node_state(newzone->zone_pgdat, NR_FILE_DIRTY);
+			__inc_zone_state(newzone, NR_ZONE_WRITE_PENDING);
+		}
+	}
+	local_irq_enable();
+
+	return MIGRATEPAGE_SUCCESS;
+}
+EXPORT_SYMBOL(cc_migrate_page_move_mapping);
 /*
  * The expected number of remaining references is the same as that
  * of migrate_page_move_mapping().

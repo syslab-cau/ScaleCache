@@ -324,7 +324,7 @@ unsigned int __cc_do_page_cache_readahead(struct address_space *mapping,
 			continue;
 		}
 
-		page = __page_cache_alloc(gfp_mask);
+		page = __cc_page_cache_alloc(gfp_mask);
 		if (!page)
 			break;
 		page->index = page_offset;

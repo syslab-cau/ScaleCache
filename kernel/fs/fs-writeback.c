@@ -2101,14 +2101,14 @@ EXPORT_SYMBOL(wb_workfn_in_scext4);
  */
 void wb_workfn(struct work_struct *work)
 {
+	struct bdi_writeback *wb = container_of(to_delayed_work(work),
+						struct bdi_writeback, dwork);
+	long pages_written;
+	
 	if (wb_workfn_in_scext4) {
 		(*wb_workfn_in_scext4)(work);
 		return;
 	}
-
-	struct bdi_writeback *wb = container_of(to_delayed_work(work),
-						struct bdi_writeback, dwork);
-	long pages_written;
 
 	set_worker_desc("flush-%s", bdi_dev_name(wb->bdi));
 	current->flags |= PF_SWAPWRITE;

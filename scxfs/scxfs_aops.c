@@ -935,10 +935,10 @@ scxfs_writepage_map(
 		 * so another attempt to write this page in this writeback sweep
 		 * will be made.
 		 */
-		set_page_writeback_keepwrite(page);
+		cc_set_page_writeback_keepwrite(page);
 	} else {
 		clear_page_dirty_for_io(page);
-		set_page_writeback(page);
+		cc_set_page_writeback(page);
 	}
 
 	unlock_page(page);

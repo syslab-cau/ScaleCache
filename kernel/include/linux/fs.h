@@ -2725,6 +2725,8 @@ extern int invalidate_partition(struct gendisk *, int);
 #endif
 unsigned long invalidate_mapping_pages(struct address_space *mapping,
 					pgoff_t start, pgoff_t end);
+unsigned long cc_invalidate_mapping_pages(struct address_space *mapping,
+					pgoff_t start, pgoff_t end);
 
 static inline void invalidate_remote_inode(struct inode *inode)
 {
@@ -2741,18 +2743,31 @@ extern int filemap_flush(struct address_space *);
 extern int filemap_fdatawait_keep_errors(struct address_space *mapping);
 extern int filemap_fdatawait_range(struct address_space *, loff_t lstart,
 				   loff_t lend);
+extern int cc_filemap_fdatawait_range(struct address_space *, loff_t lstart,
+				   loff_t lend);
 extern int filemap_fdatawait_range_keep_errors(struct address_space *mapping,
+		loff_t start_byte, loff_t end_byte);
+extern int cc_filemap_fdatawait_range_keep_errors(struct address_space *mapping,
 		loff_t start_byte, loff_t end_byte);
 
 static inline int filemap_fdatawait(struct address_space *mapping)
 {
 	return filemap_fdatawait_range(mapping, 0, LLONG_MAX);
 }
+static inline int cc_filemap_fdatawait(struct address_space *mapping)
+{
+	return cc_filemap_fdatawait_range(mapping, 0, LLONG_MAX);
+}
 
 extern bool filemap_range_has_page(struct address_space *, loff_t lstart,
 				  loff_t lend);
+extern bool cc_filemap_range_has_page(struct address_space *, loff_t lstart, 
+				  loff_t lend);
 extern int filemap_write_and_wait(struct address_space *mapping);
+extern int cc_filemap_write_and_wait(struct address_space *mapping);
 extern int filemap_write_and_wait_range(struct address_space *mapping,
+				        loff_t lstart, loff_t lend);
+extern int cc_filemap_write_and_wait_range(struct address_space *mapping,
 				        loff_t lstart, loff_t lend);
 extern int __filemap_fdatawrite_range(struct address_space *mapping,
 				loff_t start, loff_t end, int sync_mode);
@@ -2766,8 +2781,14 @@ extern int __must_check file_fdatawait_range(struct file *file, loff_t lstart,
 extern int __must_check file_check_and_advance_wb_err(struct file *file);
 extern int __must_check file_write_and_wait_range(struct file *file,
 						loff_t start, loff_t end);
+extern int __must_check cc_file_write_and_wait_range(struct file *file,
+						loff_t start, loff_t end);
 
 static inline int file_write_and_wait(struct file *file)
+{
+	return file_write_and_wait_range(file, 0, LLONG_MAX);
+}
+static inline int cc_file_write_and_wait(struct file *file)
 {
 	return file_write_and_wait_range(file, 0, LLONG_MAX);
 }

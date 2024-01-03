@@ -1002,9 +1002,6 @@ unsigned pagevec_lookup_entries(struct pagevec *pvec,
 	return pagevec_count(pvec);
 }
 
-unsigned cc_find_get_entries(struct address_space *mapping,
-			  pgoff_t start, unsigned int nr_entries,
-			  struct page **entries, pgoff_t *indices);
 unsigned cc_pagevec_lookup_entries(struct pagevec *pvec,
 				struct address_space *mapping,
 				pgoff_t start, unsigned nr_entries,
@@ -1014,7 +1011,6 @@ unsigned cc_pagevec_lookup_entries(struct pagevec *pvec,
 				    pvec->pages, indices);
 	return pagevec_count(pvec);
 }
-EXPORT_SYMBOL(cc_pagevec_lookup_entries);	// seokjoo
 
 /**
  * pagevec_remove_exceptionals - pagevec exceptionals pruning
@@ -1066,6 +1062,15 @@ unsigned pagevec_lookup_range(struct pagevec *pvec,
 }
 EXPORT_SYMBOL(pagevec_lookup_range);
 
+unsigned cc_pagevec_lookup_range(struct pagevec *pvec,
+		struct address_space *mapping, pgoff_t *start, pgoff_t end)
+{
+	pvec->nr = cc_find_get_pages_range(mapping, start, end, PAGEVEC_SIZE,
+					pvec->pages);
+	return pagevec_count(pvec);
+}
+EXPORT_SYMBOL(cc_pagevec_lookup_range);
+
 unsigned pagevec_lookup_range_tag(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *index, pgoff_t end,
 		xa_mark_t tag)
@@ -1076,6 +1081,16 @@ unsigned pagevec_lookup_range_tag(struct pagevec *pvec,
 }
 EXPORT_SYMBOL(pagevec_lookup_range_tag);
 
+unsigned cc_pagevec_lookup_range_tag(struct pagevec *pvec,
+		struct address_space *mapping, pgoff_t *index, pgoff_t end,
+		xa_mark_t tag)
+{
+	pvec->nr = cc_find_get_pages_range_tag(mapping, index, end, tag,
+					PAGEVEC_SIZE, pvec->pages);
+	return pagevec_count(pvec);
+}
+EXPORT_SYMBOL(cc_pagevec_lookup_range_tag);
+
 unsigned pagevec_lookup_range_nr_tag(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *index, pgoff_t end,
 		xa_mark_t tag, unsigned max_pages)
@@ -1085,6 +1100,17 @@ unsigned pagevec_lookup_range_nr_tag(struct pagevec *pvec,
 	return pagevec_count(pvec);
 }
 EXPORT_SYMBOL(pagevec_lookup_range_nr_tag);
+
+unsigned cc_pagevec_lookup_range_nr_tag(struct pagevec *pvec,
+		struct address_space *mapping, pgoff_t *index, pgoff_t end,
+		xa_mark_t tag, unsigned max_pages)
+{
+	pvec->nr = cc_find_get_pages_range_tag(mapping, index, end, tag,
+		min_t(unsigned int, max_pages, PAGEVEC_SIZE), pvec->pages);
+	return pagevec_count(pvec);
+}
+EXPORT_SYMBOL(cc_pagevec_lookup_range_nr_tag);
+
 /*
  * Perform any setup for the swap system
  */

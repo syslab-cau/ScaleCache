@@ -577,6 +577,9 @@ void __set_page_dirty(struct page *page, struct address_space *mapping,
 {
 	unsigned long flags;
 
+	if (cc_xa_is_ccxarray(CC_XARRAY(&mapping->i_pages)))
+		return __cc_set_page_dirty(page, mapping, warn);
+
 	xa_lock_irqsave(&mapping->i_pages, flags);
 	if (page->mapping) {	/* Race with truncate? */
 		WARN_ON_ONCE(warn && !PageUptodate(page));
@@ -587,6 +590,25 @@ void __set_page_dirty(struct page *page, struct address_space *mapping,
 	xa_unlock_irqrestore(&mapping->i_pages, flags);
 }
 EXPORT_SYMBOL_GPL(__set_page_dirty);
+
+void __cc_set_page_dirty(struct page *page, struct address_space *mapping,
+			     int warn)
+{
+	unsigned long flags;
+
+	if (!cc_xa_is_ccxarray(CC_XARRAY(&mapping->i_pages)))
+		return __set_page_dirty(page, mapping, warn);
+
+	xa_lock_irqsave(&mapping->i_pages, flags);
+	if (page->mapping) {	/* Race with truncate? */
+		WARN_ON_ONCE(warn && !PageUptodate(page));
+		account_page_dirtied(page, mapping);
+		__cc_xa_set_mark(CC_XARRAY(&mapping->i_pages), page_index(page),
+				PAGECACHE_TAG_DIRTY);
+	}
+	xa_unlock_irqrestore(&mapping->i_pages, flags);
+}
+EXPORT_SYMBOL_GPL(__cc_set_page_dirty);
 
 /*
  * Add a page to the dirty page list.

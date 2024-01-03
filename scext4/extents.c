@@ -4704,8 +4704,6 @@ retry:
 	return ret > 0 ? ret2 : ret;
 }
 
-extern void scext4_truncate_pagecache_range(struct inode *inode, loff_t lstart, loff_t lend);
-
 static long scext4_zero_range(struct file *file, loff_t offset,
 			    loff_t len, int mode)
 {
@@ -4815,7 +4813,7 @@ static long scext4_zero_range(struct file *file, loff_t offset,
 			goto out_mutex;
 		}
 		/* Now release the pages and zero block aligned part of pages */
-		scext4_truncate_pagecache_range(inode, start, end - 1);
+		cc_truncate_pagecache_range(inode, start, end - 1);
 		inode->i_mtime = inode->i_ctime = current_time(inode);
 
 		ret = scext4_alloc_file_blocks(file, lblk, max_blocks, new_size,
@@ -5543,7 +5541,7 @@ int scext4_collapse_range(struct inode *inode, loff_t offset, loff_t len)
 					   LLONG_MAX);
 	if (ret)
 		goto out_mmap;
-	truncate_pagecache(inode, ioffset);
+	cc_truncate_pagecache(inode, ioffset);
 
 	credits = scext4_writepage_trans_blocks(inode);
 	handle = scext4_journal_start(inode, SCEXT4_HT_TRUNCATE, credits);
@@ -5595,8 +5593,6 @@ out_mutex:
 	inode_unlock(inode);
 	return ret;
 }
-
-extern void scext4_truncate_pagecache(struct inode *inode, loff_t newsize);
 
 /*
  * scext4_insert_range:
@@ -5687,7 +5683,7 @@ int scext4_insert_range(struct inode *inode, loff_t offset, loff_t len)
 			LLONG_MAX);
 	if (ret)
 		goto out_mmap;
-	scext4_truncate_pagecache(inode, ioffset);
+	cc_truncate_pagecache(inode, ioffset);
 
 	credits = scext4_writepage_trans_blocks(inode);
 	handle = scext4_journal_start(inode, SCEXT4_HT_TRUNCATE, credits);
