@@ -395,13 +395,20 @@ static inline struct page *find_subpage(struct page *page, pgoff_t offset)
 }
 
 struct page *find_get_entry(struct address_space *mapping, pgoff_t offset);
+struct page *cc_find_get_entry(struct address_space *mapping, pgoff_t offset);
 struct page *find_lock_entry(struct address_space *mapping, pgoff_t offset);
 unsigned find_get_entries(struct address_space *mapping, pgoff_t start,
 			  unsigned int nr_entries, struct page **entries,
 			  pgoff_t *indices);
+unsigned cc_find_get_entries(struct address_space *mapping,
+			  pgoff_t start, unsigned int nr_entries,
+			  struct page **entries, pgoff_t *indices);
 unsigned find_get_pages_range(struct address_space *mapping, pgoff_t *start,
 			pgoff_t end, unsigned int nr_pages,
 			struct page **pages);
+unsigned cc_find_get_pages_range(struct address_space *mapping, pgoff_t *start,
+			      pgoff_t end, unsigned int nr_pages,
+			      struct page **pages);
 static inline unsigned find_get_pages(struct address_space *mapping,
 			pgoff_t *start, unsigned int nr_pages,
 			struct page **pages)
@@ -411,7 +418,12 @@ static inline unsigned find_get_pages(struct address_space *mapping,
 }
 unsigned find_get_pages_contig(struct address_space *mapping, pgoff_t start,
 			       unsigned int nr_pages, struct page **pages);
+unsigned cc_find_get_pages_contig(struct address_space *mapping, pgoff_t index,
+			       unsigned int nr_pages, struct page **pages);
 unsigned find_get_pages_range_tag(struct address_space *mapping, pgoff_t *index,
+			pgoff_t end, xa_mark_t tag, unsigned int nr_pages,
+			struct page **pages);
+unsigned cc_find_get_pages_range_tag(struct address_space *mapping, pgoff_t *index,
 			pgoff_t end, xa_mark_t tag, unsigned int nr_pages,
 			struct page **pages);
 static inline unsigned find_get_pages_tag(struct address_space *mapping,
@@ -421,8 +433,17 @@ static inline unsigned find_get_pages_tag(struct address_space *mapping,
 	return find_get_pages_range_tag(mapping, index, (pgoff_t)-1, tag,
 					nr_pages, pages);
 }
+static inline unsigned cc_find_get_pages_tag(struct address_space *mapping,
+			pgoff_t *index, xa_mark_t tag, unsigned int nr_pages,
+			struct page **pages)
+{
+	return cc_find_get_pages_range_tag(mapping, index, (pgoff_t)-1, tag,
+					nr_pages, pages);
+}
 
 struct page *grab_cache_page_write_begin(struct address_space *mapping,
+			pgoff_t index, unsigned flags);
+struct page *cc_grab_cache_page_write_begin(struct address_space *mapping,
 			pgoff_t index, unsigned flags);
 
 /*
@@ -436,6 +457,8 @@ static inline struct page *grab_cache_page(struct address_space *mapping,
 
 extern struct page * read_cache_page(struct address_space *mapping,
 				pgoff_t index, filler_t *filler, void *data);
+extern struct page * cc_read_cache_page(struct address_space *mapping,
+				pgoff_t index, filler_t *filler, void *data);
 extern struct page * read_cache_page_gfp(struct address_space *mapping,
 				pgoff_t index, gfp_t gfp_mask);
 extern int read_cache_pages(struct address_space *mapping,
@@ -445,6 +468,11 @@ static inline struct page *read_mapping_page(struct address_space *mapping,
 				pgoff_t index, void *data)
 {
 	return read_cache_page(mapping, index, NULL, data);
+}
+static inline struct page *cc_read_mapping_page(struct address_space *mapping,
+				pgoff_t index, void *data)
+{
+	return cc_read_cache_page(mapping, index, NULL, data);
 }
 
 /*
@@ -590,6 +618,7 @@ extern void put_and_wait_on_page_locked(struct page *page);
 
 void wait_on_page_writeback(struct page *page);
 extern void end_page_writeback(struct page *page);
+extern void cc_end_page_writeback(struct page *page);
 void wait_for_stable_page(struct page *page);
 
 void page_endio(struct page *page, bool is_write, int err);
@@ -665,9 +694,14 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 int cc_add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 				pgoff_t index, gfp_t gfp_mask);
 extern void delete_from_page_cache(struct page *page);
+extern void cc_delete_from_page_cache(struct page *page);
 extern void __delete_from_page_cache(struct page *page, void *shadow);
+extern void __cc_delete_from_page_cache(struct page *page, void *shadow);
 int replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask);
+int cc_replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask);
 void delete_from_page_cache_batch(struct address_space *mapping,
+				  struct pagevec *pvec);
+void cc_delete_from_page_cache_batch(struct address_space *mapping,
 				  struct pagevec *pvec);
 
 /*

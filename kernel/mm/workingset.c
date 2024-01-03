@@ -484,7 +484,7 @@ static unsigned long count_shadow_nodes(struct shrinker *shrinker,
 	return nodes - max_nodes;
 }
 
-enum lru_status cc_shadow_lru_isolate(struct list_head *item,
+static enum lru_status cc_shadow_lru_isolate(struct list_head *item,
 					  struct list_lru_one *lru,
 					  spinlock_t *lru_lock,
 					  void *arg) __must_hold(lru_lock);
@@ -560,8 +560,7 @@ out:
 	return ret;
 }
 
-//static enum lru_status cc_shadow_lru_isolate(struct list_head *item,
-enum lru_status cc_shadow_lru_isolate(struct list_head *item,
+static enum lru_status cc_shadow_lru_isolate(struct list_head *item,
 					  struct list_lru_one *lru,
 					  spinlock_t *lru_lock,
 					  void *arg) __must_hold(lru_lock)
@@ -640,8 +639,6 @@ out:
 	spin_lock_irq(lru_lock);
 	return ret;
 }
-EXPORT_SYMBOL(cc_shadow_lru_isolate);
-
 
 static unsigned long scan_shadow_nodes(struct shrinker *shrinker,
 				       struct shrink_control *sc)

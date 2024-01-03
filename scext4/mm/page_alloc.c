@@ -2296,29 +2296,3 @@ check_retry_cpuset(int cpuset_mems_cookie, struct alloc_context *ac)
 	return false;
 }
 
-extern inline struct page *
-__alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
-		unsigned int alloc_flags, const struct alloc_context *ac,
-		enum compact_priority prio, enum compact_result *compact_result);
-
-extern inline bool
-should_compact_retry(struct alloc_context *ac, unsigned int order, int alloc_flags,
-		     enum compact_result compact_result,
-		     enum compact_priority *compact_priority,
-		     int *compaction_retries);
-
-extern inline struct page *
-__alloc_pages_may_oom(gfp_t gfp_mask, unsigned int order,
-	const struct alloc_context *ac, unsigned long *did_some_progress);
-
-extern inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
-		int preferred_nid, nodemask_t *nodemask,
-		struct alloc_context *ac, gfp_t *alloc_mask,
-		unsigned int *alloc_flags);
-
-extern inline void finalise_ac(gfp_t gfp_mask, struct alloc_context *ac);
-
-extern inline unsigned int
-alloc_flags_nofragment(struct zone *zone, gfp_t gfp_mask);
-
-

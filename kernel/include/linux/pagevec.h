@@ -29,8 +29,15 @@ unsigned pagevec_lookup_entries(struct pagevec *pvec,
 				struct address_space *mapping,
 				pgoff_t start, unsigned nr_entries,
 				pgoff_t *indices);
+unsigned cc_pagevec_lookup_entries(struct pagevec *pvec,
+				struct address_space *mapping,
+				pgoff_t start, unsigned nr_entries,
+				pgoff_t *indices);
 void pagevec_remove_exceptionals(struct pagevec *pvec);
 unsigned pagevec_lookup_range(struct pagevec *pvec,
+			      struct address_space *mapping,
+			      pgoff_t *start, pgoff_t end);
+unsigned cc_pagevec_lookup_range(struct pagevec *pvec,
 			      struct address_space *mapping,
 			      pgoff_t *start, pgoff_t end);
 static inline unsigned pagevec_lookup(struct pagevec *pvec,
@@ -39,8 +46,17 @@ static inline unsigned pagevec_lookup(struct pagevec *pvec,
 {
 	return pagevec_lookup_range(pvec, mapping, start, (pgoff_t)-1);
 }
+static inline unsigned cc_pagevec_lookup(struct pagevec *pvec,
+				      struct address_space *mapping,
+				      pgoff_t *start)
+{
+	return cc_pagevec_lookup_range(pvec, mapping, start, (pgoff_t)-1);
+}
 
 unsigned pagevec_lookup_range_tag(struct pagevec *pvec,
+		struct address_space *mapping, pgoff_t *index, pgoff_t end,
+		xa_mark_t tag);
+unsigned cc_pagevec_lookup_range_tag(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *index, pgoff_t end,
 		xa_mark_t tag);
 unsigned pagevec_lookup_range_nr_tag(struct pagevec *pvec,
@@ -50,6 +66,11 @@ static inline unsigned pagevec_lookup_tag(struct pagevec *pvec,
 		struct address_space *mapping, pgoff_t *index, xa_mark_t tag)
 {
 	return pagevec_lookup_range_tag(pvec, mapping, index, (pgoff_t)-1, tag);
+}
+static inline unsigned cc_pagevec_lookup_tag(struct pagevec *pvec,
+		struct address_space *mapping, pgoff_t *index, xa_mark_t tag)
+{
+	return cc_pagevec_lookup_range_tag(pvec, mapping, index, (pgoff_t)-1, tag);
 }
 
 static inline void pagevec_init(struct pagevec *pvec)

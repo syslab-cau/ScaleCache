@@ -49,7 +49,7 @@ void unmap_page_range(struct mmu_gather *tlb,
 			     unsigned long addr, unsigned long end,
 			     struct zap_details *details);
 
-extern unsigned int __cc_do_page_cache_readahead(struct address_space *mapping,
+extern unsigned int __do_page_cache_readahead(struct address_space *mapping,
 		struct file *filp, pgoff_t offset, unsigned long nr_to_read,
 		unsigned long lookahead_size);
 
@@ -59,7 +59,7 @@ extern unsigned int __cc_do_page_cache_readahead(struct address_space *mapping,
 static inline unsigned long ra_submit(struct file_ra_state *ra,
 		struct address_space *mapping, struct file *filp)
 {
-	return __cc_do_page_cache_readahead(mapping, filp,
+	return __do_page_cache_readahead(mapping, filp,
 					ra->start, ra->size, ra->async_size);
 }
 
@@ -85,7 +85,7 @@ extern unsigned long highest_memmap_pfn;
 /*
  * in mm/vmscan.c:
  */
-extern int scext4_isolate_lru_page(struct page *page);
+extern int isolate_lru_page(struct page *page);
 extern void putback_lru_page(struct page *page);
 
 /*
@@ -497,6 +497,16 @@ static inline void mminit_validate_memmodel_limits(unsigned long *start_pfn,
 #define NODE_RECLAIM_FULL	-1
 #define NODE_RECLAIM_SOME	0
 #define NODE_RECLAIM_SUCCESS	1
+
+#ifdef CONFIG_NUMA
+extern int node_reclaim(struct pglist_data *, gfp_t, unsigned int);
+#else
+static inline int node_reclaim(struct pglist_data *pgdat, gfp_t mask,
+				unsigned int order)
+{
+	return NODE_RECLAIM_NOSCAN;
+}
+#endif
 
 extern int hwpoison_filter(struct page *p);
 

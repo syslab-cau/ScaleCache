@@ -57,7 +57,7 @@ static ssize_t scext4_dax_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	if (!IS_DAX(inode)) {
 		inode_unlock_shared(inode);
 		/* Fallback to buffered IO in case we cannot support DAX */
-		return generic_file_read_iter(iocb, to);
+		return cc_generic_file_read_iter(iocb, to);
 	}
 	ret = dax_iomap_rw(iocb, to, &scext4_iomap_ops);
 	inode_unlock_shared(inode);
@@ -368,12 +368,10 @@ static const struct vm_operations_struct scext4_dax_vm_ops = {
 #define scext4_dax_vm_ops	scext4_file_vm_ops
 #endif
 
-void cc_filemap_map_pages(struct vm_fault *vmf,
-		pgoff_t start_pgoff, pgoff_t end_pgoff);
-
 static const struct vm_operations_struct scext4_file_vm_ops = {
 	.fault		= scext4_filemap_fault,
-	.map_pages	= cc_filemap_map_pages,
+//	.map_pages	= cc_filemap_map_pages,
+	.map_pages	= filemap_map_pages,
 	.page_mkwrite   = scext4_page_mkwrite,
 };
 

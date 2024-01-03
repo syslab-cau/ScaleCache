@@ -88,7 +88,7 @@ __scext4_find_get_block_slow(struct block_device *bdev, sector_t block)
 	if (!page)
 		goto out;
 
-	if(!(page_locked = trylock_page(page)))	// seokjoo
+	if (!(page_locked = trylock_page(page)))	// seokjoo
 		spin_lock(&bd_mapping->private_lock);
 
 	if (!page_has_buffers(page))

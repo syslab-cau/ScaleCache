@@ -113,13 +113,6 @@ static inline void node_mark_all(struct cc_xa_node *node, cc_xa_mark_t mark)
 	bitmap_fill(node_marks(node, mark), CC_XA_CHUNK_SIZE);
 }
 
-#if 0
-static inline bool logical_delete(struct cc_xa_node *node)
-{
-	return __test_and_set_bit(node->del, 1);
-}
-#endif 
-
 #define mark_inc(mark) do { \
 	mark = (__force cc_xa_mark_t)((__force unsigned)(mark) + 1); \
 } while (0)
@@ -127,7 +120,7 @@ static inline bool logical_delete(struct cc_xa_node *node)
 /*
  * cc_xas_squash_marks() - Merge all marks to the first entry
  * @xas: Array operation state.
- * 
+ *
  * Set a mark on the first entry if any entry has it set.  Clear marks on
  * all sibling entries.
  */
@@ -214,7 +207,7 @@ static void *cc_xas_descend(struct cc_xa_state *xas, struct cc_xa_node *node)
 {
 	unsigned int offset = get_offset(xas->xa_index, node);
 	void *entry = cc_xa_entry(xas->xa, node, offset);
-	
+
 	//xas->xa_node = node;
 	cc_xas_set_xa_node(xas, node);
 	if (cc_xa_is_sibling(entry)) {
@@ -241,55 +234,31 @@ static void *cc_xas_descend(struct cc_xa_state *xas, struct cc_xa_node *node)
  * Context: Any context.  The caller should hold the xa_lock or the RCU lock.
  * Return: Usually an entry in the XArray, but see description for exceptions.
  */
-#include <linux/sched.h>
-
 void *cc_xas_load(struct cc_xa_state *xas, bool rewind)
 {
-	struct cc_xa_node *parent = NULL;
 	void *entry = cc_xas_start(xas);
-	void **slot;
-	struct cc_xa_node *node = NULL;
+	struct cc_xa_node *node;
 
 	while (cc_xa_is_node(entry)) {
 		node = cc_xa_to_node(entry);
-		//unsigned short refcnt = __sync_fetch_and_add(&node->refcnt, 0);
-		//CC_XA_NODE_BUG_ON(node, node->refcnt > 0);
-		//if (refcnt > 0)
-		//	printk("[@%px] pid: %d, node->shift: %u ->refcnt: %hu\n", node, current->pid, node->shift, refcnt);
-
-		if (node->refcnt > 60000) {
-		//	printk("[WARNING!!] [@%p] before get_node refcnt: %hu (%s:%d)\n", node, node->refcnt, __func__, __LINE__);
-			CC_XA_NODE_BUG_ON(node, 1);
-		}
-		
 		node = cc_xa_get_node(xas, node);
 
-/*sys */
-		while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST)) {
-			// wait for other thread
-			//printk("waiting for other thread while searching\n");
+		/* wait for other thread */
+		while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST))
 			cpu_relax();
-		}
 
-
+		/* node logically deleted! returning NULL */
 		if (__atomic_load_n(&node->del, __ATOMIC_SEQ_CST)) {
-			//printk("node logically deleted! returning null\n");
 			entry = NULL;
-			cc_xas_reset(xas);
+			//cc_xas_reset(xas);
 			break;
 		}
 
-		if (xas->xa_shift > node->shift) 
+		if (xas->xa_shift > node->shift)
 			break;
-descend:
 		entry = cc_xas_descend(xas, node);
-		//parent_slot = &node->slots[xas->xa_offset];
-		// it is okay to put node here, since xas->xa_node got refcnt in xas_descend()
-		//cc_xa_put_node(node);
-		if (node->shift == 0) {		// reached leaf node
-			//CC_XA_NODE_BUG_ON(node, cc_xa_node_is_gc(entry));
+		if (node->shift == 0)		// reached leaf node
 			break;
-		}
 	}
 	if (rewind)
 		cc_xas_rewind_refcnt(xas);
@@ -297,48 +266,6 @@ descend:
 	return entry;
 }
 EXPORT_SYMBOL_GPL(cc_xas_load);
-
-void *cc_xas_load_debug(struct cc_xa_state *xas)
-{
-	struct cc_xa_node *parent = NULL;
-	void *entry = cc_xas_start(xas);
-	void **slot;
-	struct cc_xa_node *node = NULL;
-
-	while (cc_xa_is_node(entry)) {
-		struct cc_xa_node *node = cc_xa_to_node(entry);
-		//unsigned short refcnt = __sync_fetch_and_add(&node->refcnt, 0);
-		//CC_XA_NODE_BUG_ON(node, node->refcnt > 0);
-		//if (refcnt > 0)
-		//	printk("[@%px] pid: %d, node->shift: %u ->refcnt: %hu\n", node, current->pid, node->shift, refcnt);
-
-		if (node->refcnt > 60000) {
-		//	printk("[WARNING!!] [@%p] before get_node refcnt: %hu (%s:%d)\n", node, node->refcnt, __func__, __LINE__);
-			CC_XA_NODE_BUG_ON(node, 1);
-		}
-		
-		node = cc_xa_get_node(xas, cc_xa_to_node(entry));
-		if (__sync_fetch_and_add(&node->gc_flag, 0)) {
-		//	printk("node logically deleted! returning null\n");
-			return NULL;
-		}
-		cc_xa_dump_node(node);
-
-		if (xas->xa_shift > node->shift) 
-			break;
-descend:
-		entry = cc_xas_descend(xas, node);
-		//parent_slot = &node->slots[xas->xa_offset];
-		// it is okay to put node here, since xas->xa_node got refcnt in xas_descend()
-		//cc_xa_put_node(node);
-		if (node->shift == 0) {		// reached leaf node
-			//CC_XA_NODE_BUG_ON(node, cc_xa_node_is_gc(entry));
-			break;
-		}
-	}
-
-	return entry;
-}
 
 /* Move the radix tree node cache here */
 extern struct kmem_cache *radix_tree_node_cachep;
@@ -399,6 +326,7 @@ bool cc_xas_nomem(struct cc_xa_state *xas, gfp_t gfp)
 	if (xas->xa->xa_flags & CC_XA_FLAGS_ACCOUNT)
 		gfp |= __GFP_ACCOUNT;
 	xas->xa_alloc = kmem_cache_alloc(radix_tree_node_cachep, gfp);
+	xas->xa_talloc = kmem_cache_alloc(cc_xa_node_tentry_cachep, gfp);
 	if (!xas->xa_alloc)
 		return false;
 	xas->xa_alloc->parent = NULL;
@@ -432,9 +360,11 @@ static bool __cc_xas_nomem(struct cc_xa_state *xas, gfp_t gfp)
 	if (gfpflags_allow_blocking(gfp)) {
 		cc_xas_unlock_type(xas, lock_type);
 		xas->xa_alloc = kmem_cache_alloc(radix_tree_node_cachep, gfp);
+		xas->xa_talloc = kmem_cache_alloc(cc_xa_node_tentry_cachep, gfp);
 		cc_xas_lock_type(xas, lock_type);
 	} else {
 		xas->xa_alloc = kmem_cache_alloc(radix_tree_node_cachep, gfp);
+		xas->xa_talloc = kmem_cache_alloc(cc_xa_node_tentry_cachep, gfp);
 	}
 	if (!xas->xa_alloc)
 		return false;
@@ -477,11 +407,9 @@ static void *cc_xas_alloc(struct cc_xa_state *xas, unsigned int shift)
 	}
 
 	if (parent) {
-		int parent_cnt;
 		node->offset = xas->xa_offset;
 		//parent->count++;
-		//parent_cnt = __sync_add_and_fetch(&parent->count, 1);
-		//CC_XA_NODE_BUG_ON(node, parent_cnt > CC_XA_CHUNK_SIZE);
+		//CC_XA_NODE_BUG_ON(node, parent->count > CC_XA_CHUNK_SIZE);
 		//cc_xas_update(xas, parent);
 	}
 	CC_XA_NODE_BUG_ON(node, shift > BITS_PER_LONG);
@@ -496,6 +424,35 @@ static void *cc_xas_alloc(struct cc_xa_state *xas, unsigned int shift)
 	node->array = xas->xa;
 
 	return node;
+}
+
+struct cc_xa_node *
+__cc_xas_get_node(struct cc_xa_state *xas, struct cc_xa_node *node)
+{
+	struct node_trace_entry *tentry = xas->xa_talloc;
+	int refcnt = __sync_fetch_and_add(&node->refcnt, 1);
+	
+	CC_XA_NODE_WARN_ON(node, refcnt == USHRT_MAX, "refcount++ OVERFLOW!!");
+	
+	if (tentry) {
+		xas->xa_talloc = NULL;
+	} else {
+		gfp_t gfp = GFP_NOWAIT | __GFP_NOWARN;
+
+		if (xas->xa->xa_flags & CC_XA_FLAGS_ACCOUNT)
+			gfp |= __GFP_ACCOUNT;
+
+		tentry = kmem_cache_alloc(cc_xa_node_tentry_cachep, gfp); 
+		if (!tentry) {
+			cc_xas_set_err(xas, -ENOMEM);
+			return NULL;
+		}
+	}
+	//tentry = kmalloc(sizeof(struct node_trace_entry), GFP_KERNEL);
+	tentry->node = node;
+	list_add(&tentry->list, &xas->node_trace);
+
+	return tentry->node;
 }
 
 #ifdef CONFIG_XARRAY_MULTI
@@ -567,20 +524,12 @@ static void cc_xas_shrink(struct cc_xa_state *xas)
 			RCU_INIT_POINTER(node->slots[0], CC_XA_RETRY_ENTRY);
 		cc_xas_update(xas, node);
 		//cc_xa_node_free(node);
-		
-		/*
-		if (!logical_delete (node))
-			pr_debug("Error !");
-		*/
-
 		if (!cc_xa_is_node(entry))
 			break;
 		node = cc_xa_to_node(entry);
 		node->parent = NULL;
 	}
 }
-
-#include <linux/sched.h>
 
 /*
  * cc_xas_delete_node() - Attempt to delete an cc_xa_node
@@ -592,27 +541,22 @@ static void cc_xas_shrink(struct cc_xa_state *xas)
 static void cc_xas_delete_node(struct cc_xa_state *xas)
 {
 	struct cc_xa_node *node = xas->xa_node;
-	void *temp;
 
 	for (;;) {
 		struct cc_xa_node *parent;
 		unsigned char parent_cnt;
-		int gg_count = 65535;
-		unsigned char count;
-		unsigned short refcnt = 0;
 
-		if (!cc_xa_parent(xas->xa, node))	// Check if node is root node
+		/* Escape if @node is root node */
+		if (!cc_xa_parent(xas->xa, node))
 			break;
 
 		CC_XA_NODE_BUG_ON(node, node->count > CC_XA_CHUNK_SIZE);
-		if (count = __atomic_load_n(&node->count, __ATOMIC_SEQ_CST))	// Check if entry count is not zero.
+		/* Check if entry count is not zero. */
+		if (__atomic_load_n(&node->count, __ATOMIC_SEQ_CST))
 			break;
-		
-		//if (__sync_fetch_and_add(&node->parent->count, 0) > 1) {
-		//	printk("parent->count %d\n", node->parent->count);
-		//	break;
-		//}
-		// Return if gc_flag is already set. --> Someone else is already doing gc...
+
+		/* Return if gc_flag is already set. 
+		 * --> Someone else is already doing gc... */
 		if (!__sync_bool_compare_and_swap(&node->gc_flag, 0, 1))
 			break;
 
@@ -621,41 +565,33 @@ static void cc_xas_delete_node(struct cc_xa_state *xas)
 			break;
 		}
 
-		/* 
-		 * At this point, 
-		 * 1) node is not root node.
-		 * 2) node has no entries 
-		 * 3) this thread is performing gc... 
-		 * */
+		/*
+		 * At this point,
+		 * 1) @node is not root node.
+		 * 2) @node has no entries
+		 * 3) This thread is performing logical deletion...
+		 */
 		cc_xas_set_xa_node(xas, NULL);	// to put refcnt of xas->xa_node
 
-		/* if there are other threads in the parent node */
+		/* Check if there are other threads in the parent node */
 		if (__atomic_load_n(&node->parent->refcnt, __ATOMIC_SEQ_CST) > 1) {
-		//	printk("parent->refcnt %d\n", node->parent->refcnt);
 			CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->gc_flag, 1, 0));
 			cc_xas_set_xa_node(xas, node);
 			break;
 		}
 
-		/* if there are other threads in the node */
+		/* Check if there are other threads in the @node */
 		if (__atomic_load_n(&node->refcnt, __ATOMIC_SEQ_CST) > 1) {
-		//	printk("node->refcnt %d\n", node->refcnt);
 			CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->gc_flag, 1, 0));
 			cc_xas_set_xa_node(xas, node);
 			break;
 		}
 
-		//CC_XA_NODE_BUG_ON(node, node->shift);
-
-		//CC_XA_NODE_BUG_ON(node, (refcnt = __sync_fetch_and_add(&node->refcnt, 0)) == 0);
-		
-		//parent = cc_xa_get_node(node->parent);
 		parent = cc_xa_parent_locked(xas->xa, node);
 		//xas->xa_node = parent;
 		cc_xas_set_xa_node(xas, parent);
 		xas->xa_offset = node->offset;
-	
-		//pr_cont("deleting node[@%px]... count %u parent @%px\n", node, count, parent);
+		//pr_info("deleting node[@%px]... count %u parent @%px\n", node, node->count, parent);
 		//cc_xa_node_free(node);
 		CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->del, 0, 1));
 
@@ -667,56 +603,19 @@ static void cc_xas_delete_node(struct cc_xa_state *xas)
 		}
 
 		//parent->slots[xas->xa_offset] = NULL;
-		//temp = parent->slots[xas->xa_offset];
-		//while (!__sync_bool_compare_and_swap(&parent->slots[xas->xa_offset], temp, NULL))
-		//	temp = parent->slots[xas->xa_offset];
-
+		//parent->count--;
 		parent_cnt = __sync_sub_and_fetch(&parent->count, 1);
 		CC_XA_NODE_BUG_ON(parent, parent_cnt > CC_XA_CHUNK_SIZE);
+		/* BUG if gc_flag is already released by other threads */
 		CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->gc_flag, 1, 0));
 		node = parent;
 		cc_xas_update(xas, node);
 	}
 
+	/* The Concurrent Xarray should not be shrinked if @node is root node */
 	//if (!node->parent)
 	//	cc_xas_shrink(xas);
 }
-
-// static void cc_xas_delete_node(struct cc_xa_state *xas)
-// {
-// 	struct cc_xa_node *node = xas->xa_node;
-
-// 	for (;;) {
-// 		struct cc_xa_node *parent;
-// 		unsigned char node_cnt, parent_cnt;
-
-// 		node_cnt = __sync_fetch_and_add(&node->count, 0);
-// 		CC_XA_NODE_BUG_ON(node, node_cnt > CC_XA_CHUNK_SIZE);
-// 		if (node_cnt)
-// 			break;
-
-
-// 		parent = __sync_fetch_and_add(&node->parent, 0);
-// 		xas->xa_node = parent;
-// 		xas->xa_offset = node->offset;
-// 		//cc_xa_node_free(node);
-
-// 		if (!parent) {
-// 			//xas->xa->xa_head = NULL;
-// 			xas->xa_node = CC_XAS_BOUNDS;
-// 			return;
-// 		}
-
-// 		//parent->slots[xas->xa_offset] = NULL;
-// 		parent_cnt = __sync_sub_and_fetch(&parent->count, 1);
-// 		CC_XA_NODE_BUG_ON(parent, parent_cnt > CC_XA_CHUNK_SIZE);
-// 		node = parent;
-// 		cc_xas_update(xas, node);
-// 	}
-
-// 	if (!node->parent)
-// 		cc_xas_shrink(xas);
-// }
 
 /**
  * cc_xas_free_nodes() - Free this node and all nodes that it references
@@ -731,33 +630,18 @@ static void cc_xas_free_nodes(struct cc_xa_state *xas, struct cc_xa_node *top)
 {
 	unsigned int offset = 0;
 	struct cc_xa_node *node = top;
-	//struct cc_xa_node *node = cc_xa_get_node(top);
-	
-	//if (node == CC_XAS_RESTART)
-	//	return;
-
-	//printk("%s\n", __func__);
-	
 
 	for (;;) {
 		void *entry = cc_xa_entry_locked(xas->xa, node, offset);
 
 		if (node->shift && cc_xa_is_node(entry)) {
-			struct cc_xa_node *child;
-			// descend to left most slot until we reach leaf node
-			child = cc_xa_to_node(entry);
-			//child = cc_xa_get_node(cc_xa_to_node(entry));
-			//if (child == CC_XAS_RESTART) 
-			//	goto next;
-			//cc_xa_put_node(node);
-			node = child;
+			node = cc_xa_to_node(entry);
 			offset = 0;
 			continue;
 		}
-		if (entry) 	// replace with RETRY entry
+		if (entry)
 			RCU_INIT_POINTER(node->slots[offset], CC_XA_RETRY_ENTRY);
-next:
-		offset++;	// replace every slots in this node 1with RETRY entry
+		offset++;
 		while (offset == CC_XA_CHUNK_SIZE) {
 			struct cc_xa_node *parent;
 
@@ -766,11 +650,9 @@ next:
 			node->count = 0;
 			node->nr_values = 0;
 			cc_xas_update(xas, node);
-			//cc_xa_put_node(node);
 			cc_xa_node_free(node);
 			if (node == top)
 				return;
-			//node = cc_xa_get_node(parent);
 			node = parent;
 		}
 	}
@@ -795,29 +677,20 @@ static int cc_xas_expand(struct cc_xa_state *xas, void *head)
 			shift += CC_XA_CHUNK_SHIFT;
 		return shift + CC_XA_CHUNK_SHIFT;
 	} else if (cc_xa_is_node(head)) {
-		//pr_cont("(%s:%d) ", __func__, __LINE__);
-		//node = cc_xa_get_node(xas, cc_xa_to_node(head));
 		node = cc_xa_to_node(head);
-		if (node == CC_XAS_RESTART) {
-		//	printk("Root Node being destroyed!! Something went wrong!\n");
-			return -1;
-		}
 		shift = node->shift + CC_XA_CHUNK_SHIFT;
-	}
-	// else: cc_xarray head is pointing entry!
-
+	}	// else: cc_xarray head is pointing entry!
 	//xas->xa_node = NULL;
 	cc_xas_set_xa_node(xas, NULL);
 
-	while (max > max_index(head)) { 
+	while (max > max_index(head)) {
 		cc_xa_mark_t mark = 0;
 
 		CC_XA_NODE_BUG_ON(node, shift > BITS_PER_LONG);
-		node = cc_xas_alloc(xas, shift); // alloc new node
-		if (!node) {
-			//cc_xa_put_node(cc_xa_to_node(head));
+		node = cc_xas_alloc(xas, shift);	// alloc new node
+		if (!node)
 			return -ENOMEM;
-		}
+
 		node->count = 1;
 		if (cc_xa_is_value(head))
 			node->nr_values = 1;
@@ -847,20 +720,18 @@ static int cc_xas_expand(struct cc_xa_state *xas, void *head)
 			//cc_xa_to_node(head)->offset = 0;
 			oldroot = cc_xa_to_node(head);
 			oldroot->offset = 0;
-			//rcu_assign_pointer(cc_xa_to_node(head)->parent, node); 
-			// Perform CAS
+			//rcu_assign_pointer(cc_xa_to_node(head)->parent, node);
+			/* Perform CAS */
 			struct cc_xa_node *tmp_node = cc_xa_parent(xas->xa, oldroot);
 			if (tmp_node != NULL || !__sync_bool_compare_and_swap(
-				    &oldroot->parent, tmp_node, node)) {
+					&oldroot->parent, tmp_node, node)) {
 				struct cc_xa_node *parent = __atomic_load_n(&oldroot->parent, __ATOMIC_SEQ_CST);
 				cc_xa_node_free(node);
 				head = cc_xa_mk_node(parent);
-				//cc_xa_put_node(oldroot);
 				goto ascend;
 			}
-			//cc_xa_put_node(oldroot);
 		}
-		// Perform CAS
+		/* Perform CAS */
 		tmp_head = head;
 		head = cc_xa_mk_node(node);
 		//rcu_assign_pointer(xa->xa_head, head);
@@ -876,8 +747,6 @@ ascend:
 
 	//xas->xa_node = node;
 	cc_xas_set_xa_node(xas, node);
-	//if (cc_xas_is_node(xas))
-	//	cc_xa_put_node(node);	// it is okay to put node here, since xas->xa_node got refcnt
 	return shift;
 }
 
@@ -900,34 +769,31 @@ ascend:
 static void *cc_xas_create(struct cc_xa_state *xas, bool allow_root)
 {
 	struct cc_xarray *xa = xas->xa;
-	void *entry, *temp;
+	void *entry, *curr;
 	void __rcu **slot;
-	struct cc_xa_node *node = xas->xa_node;
+	struct cc_xa_node *node = xas->xa_node, *parent = NULL;
 	int shift;
 	unsigned int order = xas->xa_shift;
-	struct cc_xa_node *parent = NULL;
+	struct node_trace_entry *tentry;
+	unsigned char parent_cnt;
 
-	if (cc_xas_top(node)) { 
-		entry = cc_xa_head_locked(xa); 
+	if (cc_xas_top(node)) {
+		entry = cc_xa_head_locked(xa);
 		//xas->xa_node = NULL;
 		cc_xas_set_xa_node(xas, NULL);
-		if (!entry && cc_xa_zero_busy(xa)) {
-		//	printk("ZERO ENTRY!!\n");
+		if (!entry && cc_xa_zero_busy(xa))
 			entry = CC_XA_ZERO_ENTRY;
-		}
 		shift = cc_xas_expand(xas, entry);
 		if (shift < 0)
 			return NULL;
 		if (!shift && !allow_root)
 			shift = CC_XA_CHUNK_SHIFT;
 		entry = cc_xa_head_locked(xa);
-		slot = &xas->xa->xa_head;
+		slot = &xa->xa_head;
 	} else if (cc_xas_error(xas)) {
 		return NULL;
 	} else if (node) {
 		unsigned int offset = xas->xa_offset;
-
-		BUG_ON((unsigned long)node < 100);
 
 		shift = node->shift;
 		entry = cc_xa_entry_locked(xa, node, offset);
@@ -935,82 +801,58 @@ static void *cc_xas_create(struct cc_xa_state *xas, bool allow_root)
 	} else {
 		shift = 0;
 		entry = cc_xa_head_locked(xa);
-		slot = &xas->xa->xa_head;
+		slot = &xa->xa_head;
 	}
 
 	while (shift > order) {
 		shift -= CC_XA_CHUNK_SHIFT;
-		//if (!cc_xas_top(node)) {
-		//}
 		if (!entry) {
-			void *curr;
-			struct cc_xa_node *parent = xas->xa_node;
-			node = cc_xa_get_node(xas, cc_xas_alloc(xas, shift));
+			parent = xas->xa_node;
+			node = cc_xas_alloc(xas, shift);
+			node = cc_xa_get_node(xas, node);
 			if (!node)
 				break;
 			if (cc_xa_track_free(xa))
 				node_mark_all(node, CC_XA_FREE_MARK);
 			//rcu_assign_pointer(*slot, cc_xa_mk_node(node));
-			if (curr = (void *)__sync_val_compare_and_swap(
-					slot, NULL, cc_xa_mk_node(node)) != NULL) {
-				//cc_xa_put_node(node);	// TODO: delete from the list!!
-			//	printk("CAS failed! (%s:%d)\n", __func__, __LINE__);
-
-				struct node_trace_entry *entry = container_of(&node, struct node_trace_entry, node);
-				BUG_ON((unsigned long) entry < 100);
-				list_del(&entry->list);
+			/* Perform CAS */
+			if ((curr = __sync_val_compare_and_swap(
+					slot, NULL, cc_xa_mk_node(node))) != NULL) {
+				tentry = list_first_entry(&xas->node_trace, struct node_trace_entry, list);
 				cc_xa_node_free(node);
-				kfree(entry);
-				//pr_cont("(%s:%d) ", __func__, __LINE__);
+				cc_xa_node_entry_free(tentry);
 				node = cc_xa_get_node(xas, cc_xa_to_node(curr));
 				goto descend;
 			}
 			if (parent) {
-				BUG_ON((unsigned long) parent < 100);
-				int parent_cnt = __sync_add_and_fetch(&parent->count, 1);
+				parent_cnt = __sync_add_and_fetch(&parent->count, 1);
 				CC_XA_NODE_BUG_ON(node, parent_cnt > CC_XA_CHUNK_SIZE);
 				cc_xas_update(xas, parent);
 			}
 		} else if (cc_xa_is_node(entry)) {
-			BUG_ON((unsigned long) cc_xa_to_node(entry) < 100);
-			//pr_cont("(%s:%d) ", __func__, __LINE__);
 			node = cc_xa_get_node(xas, cc_xa_to_node(entry));
-
-			while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST)) {
-				// wait for other thread
-				//printk("waiting for other thread while creating\n");
+			/* Wait for the other thread */
+			while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST))
 				cpu_relax();
-			}
 
 			if (__sync_bool_compare_and_swap(&node->del, 1, 0)) {
-				// if the node is marked as deleted, reuse it.
+				/* If the @node is marked as deleted, reuse it. */
 				parent = cc_xa_parent(xas->xa, node);
-				if (parent) {
-					BUG_ON((unsigned long) parent < 100);
+				if (parent)
 					__sync_add_and_fetch(&parent->count, 1);
-				}
-			//	printk("reusing node[@%px]... parent @%px (%s:%d)\n", node, parent, __func__, __LINE__);
-				goto descend;
+				//printk("reusing node[@%px]... parent @%px (%s:%d)\n", node, parent, __func__, __LINE__);
 			}
-		} else {	// node is leaf node and entry is pointer or value
-			//node = cc_xa_get_node(node);
-		//	printk(" node is leaf node and entry is pointer or value\n");
+		} else {
+			/* @node is leaf node and entry is pointer or value. */
 			break;
 		}
 descend:
-		//if (parent)
-		//	unlock_node(parent);
-		//lock_node(node);
 		entry = cc_xas_descend(xas, node);
 		slot = &node->slots[xas->xa_offset];
-		//if (shift > order)
-		CC_XA_NODE_BUG_ON(node, !node);
-		//cc_xa_put_node(node);
 		parent = node;
 	}
 
 	CC_XA_NODE_BUG_ON(node, shift);
-
 	return entry;
 }
 
@@ -1034,8 +876,6 @@ void cc_xas_create_range(struct cc_xa_state *xas)
 		xas->xa_offset |= sibs;
 	xas->xa_shift = 0;
 	xas->xa_sibs = 0;
-
-	//printk("%s\n", __func__);
 
 	for (;;) {
 		cc_xas_create(xas, true);
@@ -1080,46 +920,33 @@ static void update_node(struct cc_xa_state *xas, struct cc_xa_node *node,
 	CC_XA_NODE_BUG_ON(node, !__atomic_load_n(&node->refcnt, __ATOMIC_SEQ_CST));
 	CC_XA_NODE_BUG_ON(node, count > 1 || count < -1);
 
+	/* Wait for other thread */
+	while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST))
+		cpu_relax();
+
 	// node->count += count;
-	// node->nr_values += values;
 	node_count = __sync_add_and_fetch(&node->count, count);
+	// node->nr_values += values;
 	nr_values = __sync_add_and_fetch(&node->nr_values, values);
 
-	while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST)) {
-		// wait for other thread
-		//printk("waiting for other thread while creating\n");
-		cpu_relax();
-	}
 
 	if (node_count > 0) {
 		if (__sync_bool_compare_and_swap(&node->del, 1, 0)) {
 			// if the node is marked as deleted, reuse it.
 			parent = cc_xa_parent(xas->xa, node);
-			if (parent) {
-				BUG_ON((unsigned long) parent < 100);
+			if (parent)
 				__sync_add_and_fetch(&parent->count, 1);
-			}
 			//printk("reusing node[@%px]... parent @%px (%s:%d)\n", node, parent, __func__, __LINE__);
 		}
 	}
-	//CC_XA_NODE_BUG_ON(node, (node_count > CC_XA_CHUNK_SIZE) &&
-	//			(node_count < (U8_MAX - CC_XA_CHUNK_SIZE)));
-	//CC_XA_NODE_BUG_ON(node, (nr_values > CC_XA_CHUNK_SIZE) && 
-	//			(nr_values < (U8_MAX - CC_XA_CHUNK_SIZE)));
+
+	CC_XA_NODE_BUG_ON(node, (node_count > CC_XA_CHUNK_SIZE) &&
+				(node_count < (U8_MAX - CC_XA_CHUNK_SIZE)));
+	CC_XA_NODE_BUG_ON(node, (nr_values > CC_XA_CHUNK_SIZE) &&
+				(nr_values < (U8_MAX - CC_XA_CHUNK_SIZE)));
 	cc_xas_update(xas, node);
-	/* sys
-	 *
-	 * if(node_count < 0)
-	 * 	printk("%s, node_count: %d is minus\n", __func__, node_count);
-	 * if(node_count <= 0 && count < 0)
-	 	cc_xas_delete_node(xas);
-	 *
-	 */
-	
-	 //if(node_count < 0)
-	 //	printk("%s, node_count: %d is minus\n", __func__, node_count);
-	 if(node_count <= 0 && count < 0)
-	 	cc_xas_delete_node(xas);
+	if (node_count <= 0 && count < 0)
+		cc_xas_delete_node(xas);
 }
 
 /**
@@ -1144,36 +971,21 @@ void *cc_xas_store(struct cc_xa_state *xas, void *entry)
 	int values = 0;
 	void *first, *next;			// slot iterator
 	bool value = cc_xa_is_value(entry);
-	void *temp = cc_xa_head(xas->xa);
-	int test=0;
-
-	BUG_ON(!xas);
-
 
 	if (entry) {
 		// entry is not node and not error -> then the new node could be root
 		bool allow_root = !cc_xa_is_node(entry) && !cc_xa_is_zero(entry);
-		first = cc_xas_create(xas, allow_root); // create slot to move pointer in
+		first = cc_xas_create(xas, allow_root);	// create slot to move pointer in
 	} else {
 		first = cc_xas_load(xas, false);		// if entry is NULL -> no store?
 	}
 
-	if (cc_xas_invalid(xas)){
-	//	printk("xas invalid! (%s:%d)\n", __func__, __LINE__);
+	if (cc_xas_invalid(xas))
 		return first;
-	}
-
-	if (!first && !cc_xa_is_value(first)) {		// first is page
-		if (!entry && !cc_xa_is_value(entry)) {	// entry is page
-	//		printk("Insert & Insert!");
-		
-		}
-	}
-
 	node = xas->xa_node;
 	if (node && (xas->xa_shift < node->shift))
 		xas->xa_sibs = 0;
-	if ((first == entry) && !xas->xa_sibs)	// no need to update slot! It's already same!
+	if ((first == entry) && !xas->xa_sibs)	// No need to update slot! It's already same!
 		return first;
 
 	next = first;
@@ -1181,10 +993,6 @@ void *cc_xas_store(struct cc_xa_state *xas, void *entry)
 	max = xas->xa_offset + xas->xa_sibs;	// max number of leaves
 	if (node) {
 		slot = &node->slots[offset];	// get slot pointer
-		//if(__sync_fetch_and_add(slot, 0) != NULL){
-		//	test = 1;	
-		//}
-
 		if (xas->xa_sibs)
 			cc_xas_squash_marks(xas);
 	}
@@ -1200,43 +1008,14 @@ void *cc_xas_store(struct cc_xa_state *xas, void *entry)
 		 * so the mark clearing will appear to happen before the
 		 * entry is set to NULL.
 		 */
-		if (node)
-			temp = node->slots[offset];
-		
-	/*	
-		while (!__sync_bool_compare_and_swap(slot, temp, entry)) {
-			if(test == 1){
-		//		printk("%s, test: %d\n", __func__, test);	
-			}
-
-			if (node)
-				temp = node->slots[offset];
-		}
-*/
 		 
+		/* Perform CAS */
 		if ((curr = __sync_val_compare_and_swap(slot, next, entry)) != next) {
-			// entry: page
-			//if (!entry && !cc_xa_is_value(entry)) {	// page or NULL
-				BUG();
-			//	printk("%s, test: %d\n", __func__, test);	
-				cc_xas_set_err(xas, -EEXIST);
-				return curr;
-			//}
-			// entry: shadow
-			
-			// entry: NULL
-			//
+			cc_xas_set_err(xas, -EEXIST);
+			return curr;
 		}
-			
-
-		if (cc_xa_is_node(next) && (!node || node->shift)) { // coming from scan_shadow_nodes()
-			
-			//if (cc_xa_to_node(next)->shift)
-			//	printk("Isolated node was not Leaf Node!!");
-
-			// TODO: Modify into lock-free version!!
+		if (cc_xa_is_node(next) && (!node || node->shift))	// coming from scan_shadow_nodes()
 			cc_xas_free_nodes(xas, cc_xa_to_node(next));
-		}
 		if (!node)
 			break;
 		count += !next - !entry;
@@ -1260,11 +1039,6 @@ void *cc_xas_store(struct cc_xa_state *xas, void *entry)
 	}
 
 	update_node(xas, node, count, values);
-	//cc_xa_dump_node(node);
-//	if (xas->xa_node) {
-//		node = xas->xa_node;
-//		cc_xa_put_node(node);
-//	}
 	cc_xas_rewind_refcnt(xas);
 	return first;
 }
@@ -1858,13 +1632,14 @@ void *cc_xas_find_conflict(struct cc_xa_state *xas)
 		if (!curr)
 			return NULL;
 		while (cc_xa_is_node(curr)) {
-			struct cc_xa_node *node = cc_xa_get_node(xas, cc_xa_to_node(curr));
-			while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST)) {
-				//wait for other thread
+			struct cc_xa_node *node = cc_xa_to_node(curr);
+			node = cc_xa_get_node(xas, node);
+			/* Wait for other thread */
+			while (__atomic_load_n(&node->gc_flag, __ATOMIC_SEQ_CST))
 				cpu_relax();
-			}
 			if (__atomic_load_n(&node->del, __ATOMIC_SEQ_CST)) {
-			//	printk("node logically deleted! returning null\n");
+				/* @node logically deleted! returning NULL */
+				cc_xas_rewind_refcnt(xas);
 				return NULL;
 			}
 			curr = cc_xas_descend(xas, node);
@@ -1880,7 +1655,7 @@ void *cc_xas_find_conflict(struct cc_xa_state *xas)
 		cc_xas_rewind_refcnt(xas);
 		return NULL;
 	}
-	//printk("AH?\n");
+
 	for (;;) {
 		if (xas->xa_node->shift == xas->xa_shift) {
 			if ((xas->xa_offset & xas->xa_sibs) == xas->xa_sibs)
@@ -1931,9 +1706,12 @@ void cc_xa_garbage_collect_entry(struct cc_xarray *xa, void *entry, unsigned lon
 	if (__atomic_load_n(&node->count, __ATOMIC_SEQ_CST))	// Check if entry count is not zero.
 		goto iter_node;
 
-	// Wait if gc_flag is already set. --> Someone else is already doing gc...
+	// Give up if gc_flag is already set. --> Someone else is already doing gc...
 	if (!__sync_bool_compare_and_swap(&node->gc_flag, 0, 1))
 		goto iter_node;
+
+	if (__atomic_load_n(&node->refcnt, __ATOMIC_SEQ_CST))	// Check if node has users.
+		goto clear_gc;
 
 	if (__atomic_load_n(&node->del, __ATOMIC_SEQ_CST)) {
 		parent = cc_xa_parent_locked(xa, node);
@@ -1943,8 +1721,13 @@ void cc_xa_garbage_collect_entry(struct cc_xarray *xa, void *entry, unsigned lon
 			return;
 		}
 
-		while (!__sync_bool_compare_and_swap(&parent->gc_flag, 0, 1))	// wait for other thread
-			cpu_relax();
+		if (!__sync_bool_compare_and_swap(&parent->gc_flag, 0, 1))	// wait for other thread
+			goto clear_gc;
+
+		if (__atomic_load_n(&parent->refcnt, __ATOMIC_SEQ_CST))	{	// Check if parent node has users.
+			CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&parent->gc_flag, 1, 0));
+			goto clear_gc;
+		}
 
 		temp = parent->slots[node->offset];
 		while (!__sync_bool_compare_and_swap(&parent->slots[node->offset], temp, NULL))
@@ -1957,6 +1740,9 @@ void cc_xa_garbage_collect_entry(struct cc_xarray *xa, void *entry, unsigned lon
 		return;
 	}
 	//cc_xa_dump_node(node);
+clear_gc:
+	CC_XA_NODE_BUG_ON(node, !__sync_bool_compare_and_swap(&node->gc_flag, 1, 0));
+	
 iter_node:
 	for (i = 0; i < CC_XA_CHUNK_SIZE; i++){
 		cc_xa_garbage_collect_entry(xa, node->slots[i],
@@ -2057,9 +1843,9 @@ static void *cc_xas_result(struct cc_xa_state *xas, void *curr)
  */
 void *__cc_xa_erase(struct cc_xarray *xa, unsigned long index)
 {
-	void *result;
-	
 	CC_XA_STATE(xas, xa, index);
+	void *result;
+
 	result = cc_xas_result(&xas, cc_xas_store(&xas, NULL));
 	cc_xas_clear_xa_node(&xas);
 	return result;
@@ -2082,9 +1868,9 @@ void *cc_xa_erase(struct cc_xarray *xa, unsigned long index)
 {
 	void *entry;
 
-	//xa_lock(xa);
+	cc_xa_lock(xa);
 	entry = __cc_xa_erase(xa, index);
-	//xa_unlock(xa);
+	cc_xa_unlock(xa);
 
 	return entry;
 }
@@ -2119,7 +1905,7 @@ void *__cc_xa_store(struct cc_xarray *xa, unsigned long index, void *entry, gfp_
 		curr = cc_xas_store(&xas, entry);
 		if (cc_xa_track_free(xa))
 			cc_xas_clear_mark(&xas, CC_XA_FREE_MARK);
-	} while (__cc_xas_nomem(&xas, gfp)); 
+	} while (__cc_xas_nomem(&xas, gfp));
 
 	result = cc_xas_result(&xas, curr);
 	cc_xas_clear_xa_node(&xas);
@@ -2176,7 +1962,7 @@ void *__cc_xa_cmpxchg(struct cc_xarray *xa, unsigned long index,
 			void *old, void *entry, gfp_t gfp)
 {
 	CC_XA_STATE(xas, xa, index);
-	void *curr;
+	void *curr, *result;
 
 	if (WARN_ON_ONCE(cc_xa_is_advanced(entry)))
 		return CC_XA_ERROR(-EINVAL);
@@ -2191,7 +1977,9 @@ void *__cc_xa_cmpxchg(struct cc_xarray *xa, unsigned long index,
 		cc_xas_rewind_refcnt(&xas);
 	} while (__cc_xas_nomem(&xas, gfp));
 
-	return cc_xas_result(&xas, curr);
+	result = cc_xas_result(&xas, curr);
+	cc_xas_clear_xa_node(&xas);
+	return result;
 }
 //EXPORT_SYMBOL(__cc_xa_cmpxchg);
 
@@ -2215,7 +2003,7 @@ int __cc_xa_insert(struct cc_xarray *xa, unsigned long index, void *entry, gfp_t
 {
 	CC_XA_STATE(xas, xa, index);
 	void *curr;
-	int result;
+	int error;
 
 	if (WARN_ON_ONCE(cc_xa_is_advanced(entry)))
 		return -EINVAL;
@@ -2223,7 +2011,7 @@ int __cc_xa_insert(struct cc_xarray *xa, unsigned long index, void *entry, gfp_t
 		entry = CC_XA_ZERO_ENTRY;
 
 	do {
-		curr = cc_xas_load(&xas, false);   //check if the node is exist or not?
+		curr = cc_xas_load(&xas, false);	//check if the node is exist or not?
 		if (!curr) {
 			cc_xas_store(&xas, entry);
 			if (cc_xa_track_free(xa))
@@ -2233,10 +2021,10 @@ int __cc_xa_insert(struct cc_xarray *xa, unsigned long index, void *entry, gfp_t
 		}
 		cc_xas_rewind_refcnt(&xas);
 	} while (__cc_xas_nomem(&xas, gfp));
-	
-	result = cc_xas_error(&xas);
+
+	error = cc_xas_error(&xas);
 	cc_xas_clear_xa_node(&xas);
-	return result;
+	return error;
 }
 //EXPORT_SYMBOL(__cc_xa_insert);
 
@@ -2293,8 +2081,8 @@ static void cc_xas_set_range(struct cc_xa_state *xas, unsigned long first,
 void *cc_xa_store_range(struct cc_xarray *xa, unsigned long first,
 		unsigned long last, void *entry, gfp_t gfp)
 {
-	void *result;
 	CC_XA_STATE(xas, xa, 0);
+	void *result;
 
 	if (WARN_ON_ONCE(cc_xa_is_internal(entry)))
 		return CC_XA_ERROR(-EINVAL);
@@ -2324,7 +2112,6 @@ unlock:
 	} while (cc_xas_nomem(&xas, gfp));
 
 	result = cc_xas_result(&xas, NULL);
-	cc_xas_rewind_refcnt(&xas);
 	cc_xas_clear_xa_node(&xas);
 	return result;
 }
@@ -2365,8 +2152,8 @@ int cc_xa_get_order(struct cc_xarray *xa, unsigned long index)
 	order += xas.xa_node->shift;
 unlock:
 	rcu_read_unlock();
-	cc_xas_clear_xa_node(&xas);
 
+	cc_xas_clear_xa_node(&xas);
 	return order;
 }
 EXPORT_SYMBOL(cc_xa_get_order);
@@ -2392,8 +2179,8 @@ EXPORT_SYMBOL(cc_xa_get_order);
 int __cc_xa_alloc(struct cc_xarray *xa, u32 *id, void *entry,
 		struct xa_limit limit, gfp_t gfp)
 {
-	int result;
 	CC_XA_STATE(xas, xa, 0);
+	int error;
 
 	if (WARN_ON_ONCE(cc_xa_is_advanced(entry)))
 		return -EINVAL;
@@ -2414,9 +2201,9 @@ int __cc_xa_alloc(struct cc_xarray *xa, u32 *id, void *entry,
 		cc_xas_clear_mark(&xas, CC_XA_FREE_MARK);
 	} while (__cc_xas_nomem(&xas, gfp));
 
-	result = cc_xas_error(&xas);
+	error = cc_xas_error(&xas);
 	cc_xas_clear_xa_node(&xas);
-	return result;
+	return error;
 }
 //EXPORT_SYMBOL(__xa_alloc);
 
@@ -2631,13 +2418,6 @@ static bool cc_xas_sibling(struct cc_xa_state *xas)
 		((unsigned long)xas->xa_offset << node->shift);
 }
 
-#if 0
-void cc_xa_garbage_collect_node(const struct cc_xa_node *node){
-	if (node -> del)
-		cc_xa_node_free(node);
-}
-#endif
-
 /**
  * cc_xa_find_after() - Search the XArray for a present entry.
  * @xa: XArray.
@@ -2702,7 +2482,6 @@ static unsigned int cc_xas_extract_present(struct cc_xa_state *xas, void **dst,
 			break;
 	}
 	rcu_read_unlock();
-	cc_xas_clear_xa_node(xas);
 
 	return i;
 }
@@ -2722,7 +2501,6 @@ static unsigned int cc_xas_extract_marked(struct cc_xa_state *xas, void **dst,
 			break;
 	}
 	rcu_read_unlock();
-	cc_xas_clear_xa_node(xas);
 
 	return i;
 }
@@ -2785,7 +2563,8 @@ void cc_xa_destroy(struct cc_xarray *xa)
 	unsigned long flags;
 	void *entry;
 
-	xas.xa_node = NULL;
+	//xas.xa_node = NULL;
+	cc_xas_set_xa_node(&xas, NULL);
 	cc_xas_lock_irqsave(&xas, flags);
 	entry = cc_xa_head_locked(xa);
 	RCU_INIT_POINTER(xa->xa_head, NULL);
@@ -2820,7 +2599,7 @@ void cc_xa_dump_node(const struct cc_xa_node *node)
 	for (i = 0; i < CC_XA_MAX_MARKS; i++)
 		for (j = 0; j < CC_XA_MARK_LONGS; j++)
 			pr_cont(" %lx", node->marks[i][j]);
-	pr_cont(" gc_flag %d del %d refcnt %hu", 
+	pr_cont(" gc_flag %d del %d refcnt %hu",
 			node->gc_flag, node->del, node->refcnt);
 	pr_cont("\n");
 }
@@ -2845,21 +2624,20 @@ void cc_xa_dump_entry(const void *entry, unsigned long index, unsigned long shif
 
 	if (cc_xa_is_node(entry)) {
 		if (shift == 0) {
-			pr_cont("%px\n", entry);
+			pr_cont("@%px\n", entry);
 		} else {
 			unsigned long i;
 			struct cc_xa_node *node = cc_xa_to_node(entry);
 			cc_xa_dump_node(node);
-			pr_info("Check size = %lu \n", CC_XA_CHUNK_SIZE);
 			for (i = 0; i < CC_XA_CHUNK_SIZE; i++)
-				cc_xa_dump_entry(&node->slots[i],
+				cc_xa_dump_entry(node->slots[i],
 				      index + (i << node->shift), node->shift);
 		}
 	} else if (cc_xa_is_value(entry))
-		pr_cont("value %ld (0x%lx) [%px]\n", cc_xa_to_value(entry),
+		pr_cont("value %ld (0x%lx) [@%px]\n", cc_xa_to_value(entry),
 						cc_xa_to_value(entry), entry);
 	else if (!cc_xa_is_internal(entry))
-		pr_cont("%px\n", entry);
+		pr_cont("@%px\n", entry);
 	else if (cc_xa_is_retry(entry))
 		pr_cont("retry (%ld)\n", cc_xa_to_internal(entry));
 	else if (cc_xa_is_sibling(entry))
@@ -2867,7 +2645,7 @@ void cc_xa_dump_entry(const void *entry, unsigned long index, unsigned long shif
 	else if (cc_xa_is_zero(entry))
 		pr_cont("zero (%ld)\n", cc_xa_to_internal(entry));
 	else
-		pr_cont("UNKNOWN ENTRY (%px)\n", entry);
+		pr_cont("UNKNOWN ENTRY (@%px)\n", entry);
 }
 
 void cc_xa_dump(const struct cc_xarray *xa)
@@ -2875,7 +2653,7 @@ void cc_xa_dump(const struct cc_xarray *xa)
 	void *entry = cc_xa_head(xa);
 	unsigned int shift = 0;
 
-	pr_info("cc_xarray: %px head %px flags %x marks %d %d %d\n", xa, entry,
+	pr_info("cc_xarray: @%px head @%px flags %x marks %d %d %d\n", xa, entry,
 			xa->xa_flags, cc_xa_marked(xa, CC_XA_MARK_0),
 			cc_xa_marked(xa, CC_XA_MARK_1), cc_xa_marked(xa, CC_XA_MARK_2));
 	if (cc_xa_is_node(entry))
