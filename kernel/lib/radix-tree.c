@@ -26,7 +26,6 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/xarray.h>
-#include <linux/cc_xarray.h>
 
 
 /*
@@ -34,12 +33,6 @@
  */
 struct kmem_cache *radix_tree_node_cachep;
 EXPORT_SYMBOL(radix_tree_node_cachep);
-
-/*
- * Concurrent XArray node trace entry cache.
- */
-struct kmem_cache *cc_xa_node_tentry_cachep;
-EXPORT_SYMBOL(cc_xa_node_tentry_cachep);
 
 /*
  * The radix tree is variable-height, so an insert operation not only has
@@ -1593,15 +1586,6 @@ radix_tree_node_ctor(void *arg)
 	INIT_LIST_HEAD(&node->private_list);
 }
 
-static void
-cc_xa_node_trace_entry_ctor(void *arg)
-{
-	struct node_trace_entry *tentry = arg;
-
-	memset(tentry, 0, sizeof(*tentry));
-	INIT_LIST_HEAD(&tentry->list);
-}
-
 static int radix_tree_cpu_dead(unsigned int cpu)
 {
 	struct radix_tree_preload *rtp;
@@ -1629,10 +1613,6 @@ void __init radix_tree_init(void)
 			sizeof(struct radix_tree_node), 0,
 			SLAB_PANIC | SLAB_RECLAIM_ACCOUNT,
 			radix_tree_node_ctor);
-	cc_xa_node_tentry_cachep = kmem_cache_create("cc_xa_node_tentry",
-			sizeof(struct node_trace_entry), 0,
-			SLAB_PANIC | SLAB_RECLAIM_ACCOUNT,
-			cc_xa_node_trace_entry_ctor);
 	ret = cpuhp_setup_state_nocalls(CPUHP_RADIX_DEAD, "lib/radix:dead",
 					NULL, radix_tree_cpu_dead);
 	WARN_ON(ret < 0);
