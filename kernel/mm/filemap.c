@@ -1424,9 +1424,6 @@ noinline int __cc_add_to_page_cache_locked(struct page *page,
 		if (cc_xas_error(&xas))
 			goto unlock;
 
-		//cc_xas_clear_xa_node(&xas);
-		//smp_mb();
-
 		spin_lock_irqsave(&mapping->nr_lock, flags);
 		if (old)
 			mapping->nrexceptional--;
@@ -1450,9 +1447,6 @@ unlock:
 	if (!huge)
 		mem_cgroup_commit_charge(page, memcg, false, false);
 	//trace_mm_filemap_add_to_page_cache(page);
-	
-	//if (xas.xa_node->refcnt != 0)
-	//	printk("xas->xa_node->refcnt is not cleared!!\n");
 	
 	return 0;
 error:

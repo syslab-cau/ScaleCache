@@ -831,7 +831,7 @@ EXPORT_SYMBOL(truncate_inode_pages);
 
 void cc_truncate_inode_pages(struct address_space *mapping, loff_t lstart)
 {
-	truncate_inode_pages_range(mapping, lstart, (loff_t)-1);
+	cc_truncate_inode_pages_range(mapping, lstart, (loff_t)-1);
 }
 EXPORT_SYMBOL(cc_truncate_inode_pages);
 

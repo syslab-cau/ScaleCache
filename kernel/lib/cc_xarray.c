@@ -326,7 +326,6 @@ bool cc_xas_nomem(struct cc_xa_state *xas, gfp_t gfp)
 	if (xas->xa->xa_flags & CC_XA_FLAGS_ACCOUNT)
 		gfp |= __GFP_ACCOUNT;
 	xas->xa_alloc = kmem_cache_alloc(radix_tree_node_cachep, gfp);
-	xas->xa_talloc = kmem_cache_alloc(cc_xa_node_tentry_cachep, gfp);
 	if (!xas->xa_alloc)
 		return false;
 	xas->xa_alloc->parent = NULL;
@@ -360,11 +359,9 @@ static bool __cc_xas_nomem(struct cc_xa_state *xas, gfp_t gfp)
 	if (gfpflags_allow_blocking(gfp)) {
 		cc_xas_unlock_type(xas, lock_type);
 		xas->xa_alloc = kmem_cache_alloc(radix_tree_node_cachep, gfp);
-		xas->xa_talloc = kmem_cache_alloc(cc_xa_node_tentry_cachep, gfp);
 		cc_xas_lock_type(xas, lock_type);
 	} else {
 		xas->xa_alloc = kmem_cache_alloc(radix_tree_node_cachep, gfp);
-		xas->xa_talloc = kmem_cache_alloc(cc_xa_node_tentry_cachep, gfp);
 	}
 	if (!xas->xa_alloc)
 		return false;
@@ -399,7 +396,7 @@ static void *cc_xas_alloc(struct cc_xa_state *xas, unsigned int shift)
 		if (xas->xa->xa_flags & CC_XA_FLAGS_ACCOUNT)
 			gfp |= __GFP_ACCOUNT;
 
-		node = kmem_cache_alloc(radix_tree_node_cachep, gfp); 
+		node = kmem_cache_alloc(radix_tree_node_cachep, gfp);
 		if (!node) {
 			cc_xas_set_err(xas, -ENOMEM);
 			return NULL;
@@ -424,35 +421,6 @@ static void *cc_xas_alloc(struct cc_xa_state *xas, unsigned int shift)
 	node->array = xas->xa;
 
 	return node;
-}
-
-struct cc_xa_node *
-__cc_xas_get_node(struct cc_xa_state *xas, struct cc_xa_node *node)
-{
-	struct node_trace_entry *tentry = xas->xa_talloc;
-	int refcnt = __sync_fetch_and_add(&node->refcnt, 1);
-	
-	CC_XA_NODE_WARN_ON(node, refcnt == USHRT_MAX, "refcount++ OVERFLOW!!");
-	
-	if (tentry) {
-		xas->xa_talloc = NULL;
-	} else {
-		gfp_t gfp = GFP_NOWAIT | __GFP_NOWARN;
-
-		if (xas->xa->xa_flags & CC_XA_FLAGS_ACCOUNT)
-			gfp |= __GFP_ACCOUNT;
-
-		tentry = kmem_cache_alloc(cc_xa_node_tentry_cachep, gfp); 
-		if (!tentry) {
-			cc_xas_set_err(xas, -ENOMEM);
-			return NULL;
-		}
-	}
-	//tentry = kmalloc(sizeof(struct node_trace_entry), GFP_KERNEL);
-	tentry->node = node;
-	list_add(&tentry->list, &xas->node_trace);
-
-	return tentry->node;
 }
 
 #ifdef CONFIG_XARRAY_MULTI
@@ -668,7 +636,6 @@ static int cc_xas_expand(struct cc_xa_state *xas, void *head)
 	struct cc_xa_node *node = NULL, *oldroot = NULL;
 	unsigned int shift = 0;
 	unsigned long max = cc_xas_max(xas);
-	void *tmp_head;
 
 	if (!head) {	// cc_xarray is empty!
 		if (max == 0)
@@ -684,6 +651,7 @@ static int cc_xas_expand(struct cc_xa_state *xas, void *head)
 	cc_xas_set_xa_node(xas, NULL);
 
 	while (max > max_index(head)) {
+		void *old_head, *cur_head;
 		cc_xa_mark_t mark = 0;
 
 		CC_XA_NODE_BUG_ON(node, shift > BITS_PER_LONG);
@@ -717,27 +685,32 @@ static int cc_xas_expand(struct cc_xa_state *xas, void *head)
 		 * it to the tree
 		 */
 		if (cc_xa_is_node(head)) {
+			struct cc_xa_node *root_parent;
 			//cc_xa_to_node(head)->offset = 0;
 			oldroot = cc_xa_to_node(head);
 			oldroot->offset = 0;
 			//rcu_assign_pointer(cc_xa_to_node(head)->parent, node);
 			/* Perform CAS */
-			struct cc_xa_node *tmp_node = cc_xa_parent(xas->xa, oldroot);
-			if (tmp_node != NULL || !__sync_bool_compare_and_swap(
-					&oldroot->parent, tmp_node, node)) {
-				struct cc_xa_node *parent = __atomic_load_n(&oldroot->parent, __ATOMIC_SEQ_CST);
+			if ((root_parent = __sync_val_compare_and_swap(
+					&oldroot->parent, NULL, node)) != NULL) {
 				cc_xa_node_free(node);
-				head = cc_xa_mk_node(parent);
+				head = cc_xa_mk_node(root_parent);
+				node = root_parent; /* Important! */
 				goto ascend;
 			}
 		}
+		/* TODO: Can anybody come across this line?
+		 * Maybe other threads should fail CAS and goto ascend,
+		 * while only one thread can come below this line!! */
 		/* Perform CAS */
-		tmp_head = head;
+		old_head = head;
 		head = cc_xa_mk_node(node);
 		//rcu_assign_pointer(xa->xa_head, head);
-		if (!__sync_bool_compare_and_swap(&xa->xa_head, tmp_head, head)) {
+		if ((cur_head = __sync_val_compare_and_swap(&xa->xa_head, old_head, head)) != old_head) {
 			cc_xa_node_free(node);
-			head = cc_xa_head(xas->xa);
+			head = cur_head;
+			node = cc_xa_to_node(head);
+			shift = node->shift;
 			goto ascend;
 		}
 		cc_xas_update(xas, node);
@@ -774,7 +747,6 @@ static void *cc_xas_create(struct cc_xa_state *xas, bool allow_root)
 	struct cc_xa_node *node = xas->xa_node, *parent = NULL;
 	int shift;
 	unsigned int order = xas->xa_shift;
-	struct node_trace_entry *tentry;
 	unsigned char parent_cnt;
 
 	if (cc_xas_top(node)) {
@@ -809,18 +781,17 @@ static void *cc_xas_create(struct cc_xa_state *xas, bool allow_root)
 		if (!entry) {
 			parent = xas->xa_node;
 			node = cc_xas_alloc(xas, shift);
-			node = cc_xa_get_node(xas, node);
 			if (!node)
 				break;
+			node = cc_xa_get_node(xas, node);
 			if (cc_xa_track_free(xa))
 				node_mark_all(node, CC_XA_FREE_MARK);
 			//rcu_assign_pointer(*slot, cc_xa_mk_node(node));
 			/* Perform CAS */
 			if ((curr = __sync_val_compare_and_swap(
 					slot, NULL, cc_xa_mk_node(node))) != NULL) {
-				tentry = list_first_entry(&xas->node_trace, struct node_trace_entry, list);
+				cc_xa_put_node(xas, node);
 				cc_xa_node_free(node);
-				cc_xa_node_entry_free(tentry);
 				node = cc_xa_get_node(xas, cc_xa_to_node(curr));
 				goto descend;
 			}
@@ -2592,15 +2563,15 @@ void cc_xa_dump_node(const struct cc_xa_node *node)
 	}
 
 	pr_cont("node @%px %s %d parent @%px shift %d count %d values %d "
+		"gc_flag %d del %d refcnt %hu "
 		"array @%px list @%px @%px marks",
 		node, node->parent ? "offset" : "max", node->offset,
 		node->parent, node->shift, node->count, node->nr_values,
+		node->gc_flag, node->del, node->refcnt,
 		node->array, node->private_list.prev, node->private_list.next);
 	for (i = 0; i < CC_XA_MAX_MARKS; i++)
 		for (j = 0; j < CC_XA_MARK_LONGS; j++)
 			pr_cont(" %lx", node->marks[i][j]);
-	pr_cont(" gc_flag %d del %d refcnt %hu",
-			node->gc_flag, node->del, node->refcnt);
 	pr_cont("\n");
 }
 EXPORT_SYMBOL(cc_xa_dump_node);

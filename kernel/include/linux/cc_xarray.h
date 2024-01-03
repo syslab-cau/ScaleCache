@@ -1130,11 +1130,6 @@ struct cc_xa_node {
 	};
 };
 
-struct node_trace_entry {
-	struct cc_xa_node *node;
-	struct list_head list;
-};
-
 void cc_xa_dump(const struct cc_xarray *);
 void cc_xa_dump_node(const struct cc_xa_node *);
 
@@ -1330,9 +1325,10 @@ struct cc_xa_state {
 		struct cc_xa_node *__xa_node;	/* Private, do not access directly! */
 	};
 	struct cc_xa_node *xa_alloc;
-	struct node_trace_entry *xa_talloc;
 	cc_xa_update_node_t xa_update;
-	struct list_head node_trace;	/* Node trace starting from the root node */
+	struct cc_xa_node *trace_root;	/* Node trace root */
+	struct cc_xa_node *trace_leaf;	/* Node trace leaf */
+	int nr_refget;			/* Counter for get_node */
 };
 
 /*
@@ -1352,9 +1348,10 @@ struct cc_xa_state {
 	.xa_pad = 0,						\
 	.xa_node = CC_XAS_RESTART,				\
 	.xa_alloc = NULL,					\
-	.xa_talloc = NULL,					\
 	.xa_update = NULL,					\
-	.node_trace = LIST_HEAD_INIT((name).node_trace),	\
+	.trace_root = NULL,					\
+	.trace_leaf = NULL,					\
+	.nr_refget = 0,						\
 }
 
 /**
@@ -1401,36 +1398,41 @@ struct cc_xa_state {
 static inline bool cc_xas_not_node(const struct cc_xa_node *node);
 
 /* Private */
-static inline int cc_xa_put_node(struct cc_xa_node *node)
+static inline int
+cc_xa_put_node(struct cc_xa_state *xas, struct cc_xa_node *node)
 {
 	int refcnt;
-	if (!cc_xas_not_node(node)) {
-		refcnt = __sync_fetch_and_sub(&node->refcnt, 1);
-		CC_XA_NODE_WARN_ON(node, refcnt == 0, "refcount-- OVERFLOW!!");
-		return refcnt;
+	if (cc_xas_not_node(node))
+		return -1;
+	refcnt = __sync_fetch_and_sub(&node->refcnt, 1);
+	if ((--xas->nr_refget) < 0)
+		pr_err("nr_refget-- negative!!\n");
+	CC_XA_NODE_WARN_ON(node, refcnt == 0, "refcount-- OVERFLOW!!");
+	/* Reached node trace root, clear the root node */
+	if (xas->trace_root == node) {
+		xas->trace_root = NULL;
+		xas->trace_leaf = NULL;
 	}
-	return -1;
+	return refcnt-1;
 }
-
-extern struct kmem_cache *cc_xa_node_tentry_cachep;
-
-static inline void cc_xa_node_entry_free(struct node_trace_entry *tentry)
-{
-	list_del_init(&tentry->list);
-	CC_XA_NODE_BUG_ON(tentry->node, !list_empty(&tentry->list));
-	kmem_cache_free(cc_xa_node_tentry_cachep, tentry);
-}
-
-struct cc_xa_node *
-__cc_xas_get_node(struct cc_xa_state *xas, struct cc_xa_node *node);
 
 /* Private */
 static inline struct cc_xa_node *
 cc_xa_get_node(struct cc_xa_state *xas, struct cc_xa_node *node)
 {
+	int refcnt;
+
 	if (cc_xas_not_node(node))
 		return node;
-	return __cc_xas_get_node(xas, node);
+	refcnt = __sync_fetch_and_add(&node->refcnt, 1);
+	CC_XA_NODE_WARN_ON(node, refcnt == USHRT_MAX, "refcount++ OVERFLOW!!");
+
+	/* Set node trace root */
+	if (!xas->trace_root)
+		xas->trace_root = node;
+	xas->trace_leaf = node;
+	xas->nr_refget++;
+	return node;
 }
 
 /**
@@ -1505,29 +1507,37 @@ static inline void
 cc_xas_set_xa_node(struct cc_xa_state *xas, struct cc_xa_node *node)
 {
 	struct cc_xa_node *old = xas->xa_node;
+	int refcnt = -1;
 
 	if (old == node)
 		return;
 
-	if (!cc_xas_not_node(node)) 
-		__sync_fetch_and_add(&node->refcnt, 1);
+	if (!cc_xas_not_node(node)) {
+		refcnt = __sync_fetch_and_add(&node->refcnt, 1);
+		CC_XA_NODE_WARN_ON(node, refcnt == USHRT_MAX, "refcount++ OVERFLOW!!");
+	}
 
 	xas->__xa_node = node;
-	if (!cc_xas_not_node(old))
-		cc_xa_put_node(old);
+	if (!cc_xas_not_node(old)) {
+		refcnt = __sync_fetch_and_sub(&old->refcnt, 1);
+		CC_XA_NODE_WARN_ON(node, refcnt == 0, "refcount-- OVERFLOW!!");
+	}
 }
 
 /* Revert node's refcnt in the node_trace list and remove from the list */
 static inline void cc_xas_rewind_refcnt(struct cc_xa_state *xas)
 {
-	struct node_trace_entry *iter, *temp;
-	struct cc_xa_node *node;
+	struct cc_xa_node *node = xas->trace_leaf;
 
-	list_for_each_entry_safe(iter, temp, &xas->node_trace, list) {
-		node = iter->node;
-		cc_xa_put_node(node);
-		cc_xa_node_entry_free(iter);
+	while (!cc_xas_not_node(node)) {
+		cc_xa_put_node(xas, node);
+		if (xas->trace_root == NULL) {
+			xas->trace_leaf = NULL;
+			break;
+		}
+		node = cc_xa_parent(xas->xa, node);
 	}
+	CC_XA_BUG_ON(xas->xa, xas->nr_refget);
 }
 
 /* True if the node represents RESTART or an error */
