@@ -18,7 +18,7 @@
 #include <linux/backing-dev.h>
 #include <trace/events/scext4.h>
 
-#ifdef CONFIG_SCEXT4_DEBUG
+#ifdef CONFIG_EXT4_DEBUG
 ushort scext4_mballoc_debug __read_mostly;
 
 module_param_named(mballoc_debug, scext4_mballoc_debug, ushort, 0644);
@@ -4118,7 +4118,7 @@ repeat:
 	}
 }
 
-#ifdef CONFIG_SCEXT4_DEBUG
+#ifdef CONFIG_EXT4_DEBUG
 static void scext4_mb_show_ac(struct scext4_allocation_context *ac)
 {
 	struct super_block *sb = ac->ac_sb;

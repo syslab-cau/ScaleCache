@@ -25,7 +25,7 @@
 
 /*
  */
-#ifdef CONFIG_SCEXT4_DEBUG
+#ifdef CONFIG_EXT4_DEBUG
 extern ushort scext4_mballoc_debug;
 
 #define mb_debug(n, fmt, ...)	                                        \

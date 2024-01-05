@@ -496,7 +496,7 @@ enum {
  * It's important that these values are the same, since we are using
  * SCEXT4_INODE_XXX to test for flag values, but SCEXT4_XXX_FL must be consistent
  * with the values of FS_XXX_FL defined in include/linux/fs.h and the on-disk
- * values found in pxt2, ext3 and scext4 filesystems, and of course the values
+ * values found in ext2, ext3 and scext4 filesystems, and of course the values
  * defined in e2fsprogs.
  *
  * It's not paranoia if the Murphy's Law really *is* out to get you.  :-)
@@ -998,7 +998,7 @@ struct scext4_inode_info {
 
 	/*
 	 * i_data_sem is for serialising scext4_truncate() against
-	 * scext4_getblock().  In the 2.4 pxt2 design, great chunks of inode's
+	 * scext4_getblock().  In the 2.4 ext2 design, great chunks of inode's
 	 * data tree are chopped off during truncate. We can't do that in
 	 * scext4 because whenever we perform intermediate commits during
 	 * truncate, the inode and all the metadata blocks *must* be in a
@@ -1186,10 +1186,10 @@ struct scext4_inode_info {
 
 #define scext4_test_and_set_bit		__test_and_set_bit_le
 #define scext4_set_bit			__set_bit_le
-#define scext4_set_bit_atomic		pxt2_set_bit_atomic
+#define scext4_set_bit_atomic		scext2_set_bit_atomic
 #define scext4_test_and_clear_bit		__test_and_clear_bit_le
 #define scext4_clear_bit			__clear_bit_le
-#define scext4_clear_bit_atomic		pxt2_clear_bit_atomic
+#define scext4_clear_bit_atomic		scext2_clear_bit_atomic
 #define scext4_test_bit			test_bit_le
 #define scext4_find_next_zero_bit		find_next_zero_bit_le
 #define scext4_find_next_bit		find_next_bit_le

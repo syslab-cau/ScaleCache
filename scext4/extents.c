@@ -1752,13 +1752,13 @@ int
 scext4_can_extents_be_merged(struct inode *inode, struct scext4_extent *ex1,
 				struct scext4_extent *ex2)
 {
-	unsigned short ext1_ee_len, pxt2_ee_len;
+	unsigned short ext1_ee_len, ext2_ee_len;
 
 	if (scext4_ext_is_unwritten(ex1) != scext4_ext_is_unwritten(ex2))
 		return 0;
 
 	ext1_ee_len = scext4_ext_get_actual_len(ex1);
-	pxt2_ee_len = scext4_ext_get_actual_len(ex2);
+	ext2_ee_len = scext4_ext_get_actual_len(ex2);
 
 	if (le32_to_cpu(ex1->ee_block) + ext1_ee_len !=
 			le32_to_cpu(ex2->ee_block))
@@ -1769,7 +1769,7 @@ scext4_can_extents_be_merged(struct inode *inode, struct scext4_extent *ex1,
 	 * as an RO_COMPAT feature, refuse to merge to extents if
 	 * this can result in the top bit of ee_len being set.
 	 */
-	if (ext1_ee_len + pxt2_ee_len > EXT_INIT_MAX_LEN)
+	if (ext1_ee_len + ext2_ee_len > EXT_INIT_MAX_LEN)
 		return 0;
 	/*
 	 * The check for IO to unwritten extent is somewhat racy as we
@@ -1780,7 +1780,7 @@ scext4_can_extents_be_merged(struct inode *inode, struct scext4_extent *ex1,
 	if (scext4_ext_is_unwritten(ex1) &&
 	    (scext4_test_inode_state(inode, SCEXT4_STATE_DIO_UNWRITTEN) ||
 	     atomic_read(&SCEXT4_I(inode)->i_unwritten) ||
-	     (ext1_ee_len + pxt2_ee_len > EXT_UNWRITTEN_MAX_LEN)))
+	     (ext1_ee_len + ext2_ee_len > EXT_UNWRITTEN_MAX_LEN)))
 		return 0;
 #ifdef AGGRESSIVE_TEST
 	if (ext1_ee_len >= 4)
@@ -3877,7 +3877,7 @@ static int scext4_convert_unwritten_extents_endio(handle_t *handle,
 	 * illegal.
 	 */
 	if (ee_block != map->m_lblk || ee_len > map->m_len) {
-#ifdef CONFIG_SCEXT4_DEBUG
+#ifdef CONFIG_EXT4_DEBUG
 		scext4_warning(inode->i_sb, "Inode (%ld) finished: extent logical block %llu,"
 			     " len %u; IO logical block %llu, len %u",
 			     inode->i_ino, (unsigned long long)ee_block, ee_len,
@@ -5847,23 +5847,23 @@ scext4_swap_extents(handle_t *handle, struct inode *inode1,
 		/* Hole handling */
 		if (!in_range(lblk1, e1_blk, e1_len) ||
 		    !in_range(lblk2, e2_blk, e2_len)) {
-			scext4_lblk_t next1, npxt2;
+			scext4_lblk_t next1, next2;
 
 			/* if hole after extent, then go to next extent */
 			next1 = scext4_ext_next_allocated_block(path1);
-			npxt2 = scext4_ext_next_allocated_block(path2);
+			next2 = scext4_ext_next_allocated_block(path2);
 			/* If hole before extent, then shift to that extent */
 			if (e1_blk > lblk1)
 				next1 = e1_blk;
 			if (e2_blk > lblk2)
-				npxt2 = e2_blk;
+				next2 = e2_blk;
 			/* Do we have something to swap */
-			if (next1 == EXT_MAX_BLOCKS || npxt2 == EXT_MAX_BLOCKS)
+			if (next1 == EXT_MAX_BLOCKS || next2 == EXT_MAX_BLOCKS)
 				goto finish;
 			/* Move to the rightest boundary */
 			len = next1 - lblk1;
-			if (len < npxt2 - lblk2)
-				len = npxt2 - lblk2;
+			if (len < next2 - lblk2)
+				len = next2 - lblk2;
 			if (len > count)
 				len = count;
 			lblk1 += len;

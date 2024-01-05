@@ -80,7 +80,7 @@ static int scext4_unfreeze(struct super_block *sb);
 static int scext4_freeze(struct super_block *sb);
 static struct dentry *scext4_mount(struct file_system_type *fs_type, int flags,
 		       const char *dev_name, void *data);
-static inline int pxt2_feature_set_ok(struct super_block *sb);
+static inline int scext2_feature_set_ok(struct super_block *sb);
 static inline int ext3_feature_set_ok(struct super_block *sb);
 static int scext4_feature_set_ok(struct super_block *sb, int readonly);
 static void scext4_destroy_lazyinit_thread(void);
@@ -126,7 +126,7 @@ static struct file_system_type scext2_fs_type = {
 	.fs_flags	= FS_REQUIRES_DEV,
 };
 MODULE_ALIAS_FS("scext2");
-MODULE_ALIAS("scepxt2");
+MODULE_ALIAS("scext2");
 #define IS_SCEXT2_SB(sb) ((sb)->s_bdev->bd_holder == &scext2_fs_type)
 #else
 #define IS_SCEXT2_SB(sb) (0)
@@ -444,7 +444,7 @@ static bool system_going_down(void)
 /* Deal with the reporting of failure conditions on a filesystem such as
  * inconsistencies detected or read IO failures.
  *
- * On pxt2, we can store the error state of the filesystem in the
+ * On ext2, we can store the error state of the filesystem in the
  * superblock.  That is not possible on scext4, because we may have other
  * write ordering constraints on the superblock which prevent us from
  * writing it out straight away; and given that the journal is about to
@@ -1593,11 +1593,11 @@ static const match_table_t tokens = {
 	{Opt_test_dummy_encryption, "test_dummy_encryption"},
 	{Opt_nombcache, "nombcache"},
 	{Opt_nombcache, "no_mbcache"},	/* for backward compatibility */
-	{Opt_removed, "check=none"},	/* mount option from pxt2/3 */
-	{Opt_removed, "nocheck"},	/* mount option from pxt2/3 */
-	{Opt_removed, "reservation"},	/* mount option from pxt2/3 */
-	{Opt_removed, "noreservation"}, /* mount option from pxt2/3 */
-	{Opt_removed, "journal=%u"},	/* mount option from pxt2/3 */
+	{Opt_removed, "check=none"},	/* mount option from ext2/3 */
+	{Opt_removed, "nocheck"},	/* mount option from ext2/3 */
+	{Opt_removed, "reservation"},	/* mount option from ext2/3 */
+	{Opt_removed, "noreservation"}, /* mount option from ext2/3 */
+	{Opt_removed, "journal=%u"},	/* mount option from ext2/3 */
 	{Opt_err, NULL},
 };
 
@@ -1773,7 +1773,7 @@ static const struct mount_opts {
 	 MOPT_NO_SCEXT2 | MOPT_DATAJ},
 	{Opt_user_xattr, SCEXT4_MOUNT_XATTR_USER, MOPT_SET},
 	{Opt_nouser_xattr, SCEXT4_MOUNT_XATTR_USER, MOPT_CLEAR},
-#ifdef CONFIG_SCEXT4_FS_POSIX_ACL
+#ifdef CONFIG_EXT4_FS_POSIX_ACL
 	{Opt_acl, SCEXT4_MOUNT_POSIX_ACL, MOPT_SET},
 	{Opt_noacl, SCEXT4_MOUNT_POSIX_ACL, MOPT_CLEAR},
 #else
@@ -1892,7 +1892,7 @@ static int handle_mount_opt(struct super_block *sb, char *opt, int token,
 
 	if ((m->flags & MOPT_NO_SCEXT2) && IS_SCEXT2_SB(sb)) {
 		scext4_msg(sb, KERN_ERR,
-			 "Mount option \"%s\" incompatible with pxt2", opt);
+			 "Mount option \"%s\" incompatible with scext2", opt);
 		return -1;
 	}
 	if ((m->flags & MOPT_NO_EXT3) && IS_SCEXT3_SB(sb)) {
@@ -3636,7 +3636,7 @@ static void scext4_set_resv_clusters(struct super_block *sb)
 	 * There's no need to reserve anything when we aren't using extents.
 	 * The space estimates are exact, there are no unwritten extents,
 	 * hole punching doesn't need new metadata... This is needed especially
-	 * to keep pxt2/3 backward compatibility.
+	 * to keep ext2/3 backward compatibility.
 	 */
 	if (!scext4_has_feature_extents(sb))
 		return;
@@ -3787,7 +3787,7 @@ static int scext4_fill_super(struct super_block *sb, void *data, int silent)
 		set_opt(sb, NO_UID32);
 	/* xattr user namespace & acls are now defaulted on */
 	set_opt(sb, XATTR_USER);
-#ifdef CONFIG_SCEXT4_FS_POSIX_ACL
+#ifdef CONFIG_EXT4_FS_POSIX_ACL
 	set_opt(sb, POSIX_ACL);
 #endif
 	/* don't forget to enable journal_csum when metadata_csum is enabled. */
@@ -4024,8 +4024,8 @@ static int scext4_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	if (IS_SCEXT2_SB(sb)) {
-		if (pxt2_feature_set_ok(sb))
-			scext4_msg(sb, KERN_INFO, "mounting pxt2 file system "
+		if (scext2_feature_set_ok(sb))
+			scext4_msg(sb, KERN_INFO, "mounting scext2 file system "
 				 "using the scext4 subsystem");
 		else {
 			/*
@@ -4034,7 +4034,7 @@ static int scext4_fill_super(struct super_block *sb, void *data, int silent)
 			 */
 			if (silent && scext4_feature_set_ok(sb, sb_rdonly(sb)))
 				goto failed_mount;
-			scext4_msg(sb, KERN_ERR, "couldn't mount as pxt2 due "
+			scext4_msg(sb, KERN_ERR, "couldn't mount as scext2 due "
 				 "to feature incompatibilities");
 			goto failed_mount;
 		}
@@ -6194,34 +6194,34 @@ static struct dentry *scext4_mount(struct file_system_type *fs_type, int flags,
 	return mount_bdev(fs_type, flags, dev_name, data, scext4_fill_super);
 }
 
-#if !defined(CONFIG_SCEXT2_FS) && !defined(CONFIG_SCEXT2_FS_MODULE) && defined(CONFIG_SCEXT4_USE_FOR_SCEXT2)
-static inline void register_as_pxt2(void)
+#if !defined(CONFIG_EXT2_FS) && !defined(CONFIG_EXT2_FS_MODULE) && defined(CONFIG_EXT4_USE_FOR_EXT2)
+static inline void register_as_scext2(void)
 {
-	int err = register_filesystem(&pxt2_fs_type);
+	int err = register_filesystem(&scext2_fs_type);
 	if (err)
 		printk(KERN_WARNING
-		       "SCEXT4-fs: Unable to register as pxt2 (%d)\n", err);
+		       "SCEXT4-fs: Unable to register as scext2 (%d)\n", err);
 }
 
-static inline void unregister_as_pxt2(void)
+static inline void unregister_as_scext2(void)
 {
-	unregister_filesystem(&pxt2_fs_type);
+	unregister_filesystem(&scext2_fs_type);
 }
 
-static inline int pxt2_feature_set_ok(struct super_block *sb)
+static inline int scext2_feature_set_ok(struct super_block *sb)
 {
-	if (scext4_has_unknown_pxt2_incompat_features(sb))
+	if (scext4_has_unknown_ext2_incompat_features(sb))
 		return 0;
 	if (sb_rdonly(sb))
 		return 1;
-	if (scext4_has_unknown_pxt2_ro_compat_features(sb))
+	if (scext4_has_unknown_ext2_ro_compat_features(sb))
 		return 0;
 	return 1;
 }
 #else
-static inline void register_as_pxt2(void) { }
-static inline void unregister_as_pxt2(void) { }
-static inline int pxt2_feature_set_ok(struct super_block *sb) { return 0; }
+static inline void register_as_scext2(void) { }
+static inline void unregister_as_scext2(void) { }
+static inline int scext2_feature_set_ok(struct super_block *sb) { return 0; }
 #endif
 
 static inline void register_as_ext3(void)
@@ -6312,7 +6312,7 @@ static int __init scext4_init_fs(void)
 	if (err)
 		goto out1;
 	register_as_ext3();
-	register_as_pxt2();
+	register_as_scext2();
 	err = register_filesystem(&scext4_fs_type);
 	if (err)
 		goto out;
@@ -6322,7 +6322,7 @@ static int __init scext4_init_fs(void)
 
 	return 0;
 out:
-	unregister_as_pxt2();
+	unregister_as_scext2();
 	unregister_as_ext3();
 	destroy_inodecache();
 out1:
@@ -6346,7 +6346,7 @@ out7:
 static void __exit scext4_exit_fs(void)
 {
 	scext4_destroy_lazyinit_thread();
-	unregister_as_pxt2();
+	unregister_as_scext2();
 	unregister_as_ext3();
 	unregister_filesystem(&scext4_fs_type);
 	destroy_inodecache();

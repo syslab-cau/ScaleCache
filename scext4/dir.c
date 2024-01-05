@@ -58,7 +58,7 @@ static int is_dx_dir(struct inode *inode)
 /*
  * Return 0 if the directory entry is OK, and 1 if there is a problem
  *
- * Note: this is the opposite of what pxt2 and ext3 historically returned...
+ * Note: this is the opposite of what ext2 and ext3 historically returned...
  *
  * bh passed here can be an inode block or a dir data block, depending
  * on the inode inline data flag.
