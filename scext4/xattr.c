@@ -85,12 +85,12 @@ static void scext4_xattr_rehash(struct scext4_xattr_header *);
 
 static const struct xattr_handler * const scext4_xattr_handler_map[] = {
 	[SCEXT4_XATTR_INDEX_USER]		     = &scext4_xattr_user_handler,
-#ifdef CONFIG_SCEXT4_FS_POSIX_ACL
+#ifdef CONFIG_EXT4_FS_POSIX_ACL
 	[SCEXT4_XATTR_INDEX_POSIX_ACL_ACCESS]  = &posix_acl_access_xattr_handler,
 	[SCEXT4_XATTR_INDEX_POSIX_ACL_DEFAULT] = &posix_acl_default_xattr_handler,
 #endif
 	[SCEXT4_XATTR_INDEX_TRUSTED]	     = &scext4_xattr_trusted_handler,
-#ifdef CONFIG_SCEXT4_FS_SECURITY
+#ifdef CONFIG_EXT4_FS_SECURITY
 	[SCEXT4_XATTR_INDEX_SECURITY]	     = &scext4_xattr_security_handler,
 #endif
 };
@@ -98,11 +98,11 @@ static const struct xattr_handler * const scext4_xattr_handler_map[] = {
 const struct xattr_handler *scext4_xattr_handlers[] = {
 	&scext4_xattr_user_handler,
 	&scext4_xattr_trusted_handler,
-#ifdef CONFIG_SCEXT4_FS_POSIX_ACL
+#ifdef CONFIG_EXT4_FS_POSIX_ACL
 	&posix_acl_access_xattr_handler,
 	&posix_acl_default_xattr_handler,
 #endif
-#ifdef CONFIG_SCEXT4_FS_SECURITY
+#ifdef CONFIG_EXT4_FS_SECURITY
 	&scext4_xattr_security_handler,
 #endif
 	NULL

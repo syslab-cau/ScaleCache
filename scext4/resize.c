@@ -1811,7 +1811,7 @@ int scext4_group_extend(struct super_block *sb, struct scext4_super_block *es,
 	scext4_get_group_no_and_offset(sb, o_blocks_count, &group, &last);
 
 	if (last == 0) {
-		scext4_warning(sb, "need to use pxt2online to resize further");
+		scext4_warning(sb, "need to use ext2online to resize further");
 		return -EPERM;
 	}
 

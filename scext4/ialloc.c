@@ -781,7 +781,7 @@ struct inode *__scext4_new_inode(handle_t *handle, struct inode *dir,
 	}
 
 	if (!handle && sbi->s_journal && !(i_flags & SCEXT4_EA_INODE_FL)) {
-#ifdef CONFIG_SCEXT4_FS_POSIX_ACL
+#ifdef CONFIG_EXT4_FS_POSIX_ACL
 		struct posix_acl *p = get_acl(dir, ACL_TYPE_DEFAULT);
 
 		if (IS_ERR(p))
