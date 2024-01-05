@@ -186,9 +186,6 @@ scxfs-y				+= $(addprefix fs/, \
 				   ) \
 				   )
 
-# ScaleCache WorkQueue
-scxfs-y				+= workqueue.o 
-
 
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
