@@ -1,0 +1,97 @@
+<YCSB RocksDB benchmark script>
+load YCSB-a x1 & run YCSB-a x10..
+*---------------------------------- ycsb load ----------------------------------*
+[OVERALL], RunTime(ms), 49985
+[OVERALL], Throughput(ops/sec), 20.00600180054016
+[TOTAL_GCS_G1_Young_Generation], Count, 202
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 766
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 1.5324597379213762
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 202
+[TOTAL_GC_TIME], Time(ms), 766
+[TOTAL_GC_TIME_%], Time(%), 1.5324597379213762
+[CLEANUP], Operations, 64
+[CLEANUP], AverageLatency(us), 7810.375
+[CLEANUP], MinLatency(us), 4
+[CLEANUP], MaxLatency(us), 499455
+[CLEANUP], 95thPercentileLatency(us), 13
+[CLEANUP], 99thPercentileLatency(us), 42
+[INSERT], Operations, 1000
+[INSERT], AverageLatency(us), 3046117.12
+[INSERT], MinLatency(us), 909824
+[INSERT], MaxLatency(us), 3952639
+[INSERT], 95thPercentileLatency(us), 3524607
+[INSERT], 99thPercentileLatency(us), 3811327
+[INSERT], Return=OK, 1000
+*---------------------------------- ycsb load end ------------------------------*
+*---------------------------------- ycsb run_1 ----------------------------------*
+[OVERALL], RunTime(ms), 115605
+[OVERALL], Throughput(ops/sec), 8.650144889926906
+[TOTAL_GCS_G1_Young_Generation], Count, 182
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 1619
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 1.400458457679166
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 182
+[TOTAL_GC_TIME], Time(ms), 1619
+[TOTAL_GC_TIME_%], Time(%), 1.400458457679166
+[READ], Operations, 493
+[READ], AverageLatency(us), 594699.7160243408
+[READ], MinLatency(us), 18896
+[READ], MaxLatency(us), 4157439
+[READ], 95thPercentileLatency(us), 2881535
+[READ], 99thPercentileLatency(us), 4003839
+[READ], Return=OK, 493
+[CLEANUP], Operations, 64
+[CLEANUP], AverageLatency(us), 3738.265625
+[CLEANUP], MinLatency(us), 4
+[CLEANUP], MaxLatency(us), 237951
+[CLEANUP], 95thPercentileLatency(us), 46
+[CLEANUP], 99thPercentileLatency(us), 73
+[UPDATE], Operations, 507
+[UPDATE], AverageLatency(us), 1.2935828449704142E7
+[UPDATE], MinLatency(us), 163328
+[UPDATE], MaxLatency(us), 74711039
+[UPDATE], 95thPercentileLatency(us), 68354047
+[UPDATE], 99thPercentileLatency(us), 72417279
+[UPDATE], Return=OK, 507
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_2 ----------------------------------*
+[OVERALL], RunTime(ms), 60339
+[OVERALL], Throughput(ops/sec), 16.573029052519928
+[TOTAL_GCS_G1_Young_Generation], Count, 100
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 1093
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 1.8114320754404283
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 100
+[TOTAL_GC_TIME], Time(ms), 1093
+[TOTAL_GC_TIME_%], Time(%), 1.8114320754404283
+[READ], Operations, 497
+[READ], AverageLatency(us), 722991.2756539235
+[READ], MinLatency(us), 18016
+[READ], MaxLatency(us), 3516415
+[READ], 95thPercentileLatency(us), 2295807
+[READ], 99thPercentileLatency(us), 3393535
+[READ], Return=OK, 497
+[CLEANUP], Operations, 64
+[CLEANUP], AverageLatency(us), 3057.09375
+[CLEANUP], MinLatency(us), 8
+[CLEANUP], MaxLatency(us), 194559
+[CLEANUP], 95thPercentileLatency(us), 32
+[CLEANUP], 99thPercentileLatency(us), 35
+[UPDATE], Operations, 503
+[UPDATE], AverageLatency(us), 6153656.493041749
+[UPDATE], MinLatency(us), 230016
+[UPDATE], MaxLatency(us), 15278079
+[UPDATE], 95thPercentileLatency(us), 11280383
+[UPDATE], 99thPercentileLatency(us), 12189695
+[UPDATE], Return=OK, 503
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_3 ----------------------------------*
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_4 ----------------------------------*

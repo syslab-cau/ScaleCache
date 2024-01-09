@@ -1,0 +1,233 @@
+<YCSB RocksDB benchmark script>
+load YCSB-a x1 & run YCSB-a x10..
+*---------------------------------- ycsb load ----------------------------------*
+[OVERALL], RunTime(ms), 49159
+[OVERALL], Throughput(ops/sec), 20.342155047905774
+[TOTAL_GCS_G1_Young_Generation], Count, 175
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 656
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 1.3344453711426187
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 175
+[TOTAL_GC_TIME], Time(ms), 656
+[TOTAL_GC_TIME_%], Time(%), 1.3344453711426187
+[CLEANUP], Operations, 64
+[CLEANUP], AverageLatency(us), 4442.53125
+[CLEANUP], MinLatency(us), 4
+[CLEANUP], MaxLatency(us), 283903
+[CLEANUP], 95thPercentileLatency(us), 15
+[CLEANUP], 99thPercentileLatency(us), 21
+[INSERT], Operations, 1000
+[INSERT], AverageLatency(us), 3003813.12
+[INSERT], MinLatency(us), 881664
+[INSERT], MaxLatency(us), 3799039
+[INSERT], 95thPercentileLatency(us), 3569663
+[INSERT], 99thPercentileLatency(us), 3766271
+[INSERT], Return=OK, 1000
+*---------------------------------- ycsb load end ------------------------------*
+*---------------------------------- ycsb run_1 ----------------------------------*
+[OVERALL], RunTime(ms), 111755
+[OVERALL], Throughput(ops/sec), 8.948145496845779
+[TOTAL_GCS_G1_Young_Generation], Count, 80
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 1639
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 1.466601046933023
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 80
+[TOTAL_GC_TIME], Time(ms), 1639
+[TOTAL_GC_TIME_%], Time(%), 1.466601046933023
+[READ], Operations, 464
+[READ], AverageLatency(us), 531259.6034482758
+[READ], MinLatency(us), 21360
+[READ], MaxLatency(us), 3239935
+[READ], 95thPercentileLatency(us), 1949695
+[READ], 99thPercentileLatency(us), 3131391
+[READ], Return=OK, 464
+[CLEANUP], Operations, 64
+[CLEANUP], AverageLatency(us), 7480.21875
+[CLEANUP], MinLatency(us), 5
+[CLEANUP], MaxLatency(us), 477695
+[CLEANUP], 95thPercentileLatency(us), 48
+[CLEANUP], 99thPercentileLatency(us), 109
+[UPDATE], Operations, 536
+[UPDATE], AverageLatency(us), 1.1959443462686567E7
+[UPDATE], MinLatency(us), 240000
+[UPDATE], MaxLatency(us), 71172095
+[UPDATE], 95thPercentileLatency(us), 66093055
+[UPDATE], 99thPercentileLatency(us), 69337087
+[UPDATE], Return=OK, 536
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_2 ----------------------------------*
+[OVERALL], RunTime(ms), 73167
+[OVERALL], Throughput(ops/sec), 13.66736370221548
+[TOTAL_GCS_G1_Young_Generation], Count, 103
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 1947
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 2.661035712821354
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 103
+[TOTAL_GC_TIME], Time(ms), 1947
+[TOTAL_GC_TIME_%], Time(%), 2.661035712821354
+[READ], Operations, 494
+[READ], AverageLatency(us), 678476.6639676114
+[READ], MinLatency(us), 17968
+[READ], MaxLatency(us), 4288511
+[READ], 95thPercentileLatency(us), 2385919
+[READ], 99thPercentileLatency(us), 3903487
+[READ], Return=OK, 494
+[CLEANUP], Operations, 64
+[CLEANUP], AverageLatency(us), 4294.359375
+[CLEANUP], MinLatency(us), 5
+[CLEANUP], MaxLatency(us), 244607
+[CLEANUP], 95thPercentileLatency(us), 57
+[CLEANUP], 99thPercentileLatency(us), 29087
+[UPDATE], Operations, 506
+[UPDATE], AverageLatency(us), 7563211.130434782
+[UPDATE], MinLatency(us), 394752
+[UPDATE], MaxLatency(us), 30212095
+[UPDATE], 95thPercentileLatency(us), 21676031
+[UPDATE], 99thPercentileLatency(us), 25853951
+[UPDATE], Return=OK, 506
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_3 ----------------------------------*
+[OVERALL], RunTime(ms), 62722
+[OVERALL], Throughput(ops/sec), 15.943369152769364
+[TOTAL_GCS_G1_Young_Generation], Count, 69
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 1075
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 1.7139121839227067
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 69
+[TOTAL_GC_TIME], Time(ms), 1075
+[TOTAL_GC_TIME_%], Time(%), 1.7139121839227067
+[READ], Operations, 520
+[READ], AverageLatency(us), 598803.4461538461
+[READ], MinLatency(us), 25344
+[READ], MaxLatency(us), 3158015
+[READ], 95thPercentileLatency(us), 1646591
+[READ], 99thPercentileLatency(us), 2404351
+[READ], Return=OK, 520
+[CLEANUP], Operations, 64
+[CLEANUP], AverageLatency(us), 8198.09375
+[CLEANUP], MinLatency(us), 7
+[CLEANUP], MaxLatency(us), 523519
+[CLEANUP], 95thPercentileLatency(us), 42
+[CLEANUP], 99thPercentileLatency(us), 87
+[UPDATE], Operations, 480
+[UPDATE], AverageLatency(us), 6666107.6
+[UPDATE], MinLatency(us), 162432
+[UPDATE], MaxLatency(us), 20201471
+[UPDATE], 95thPercentileLatency(us), 16564223
+[UPDATE], 99thPercentileLatency(us), 18366463
+[UPDATE], Return=OK, 480
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_4 ----------------------------------*
+[OVERALL], RunTime(ms), 74071
+[OVERALL], Throughput(ops/sec), 13.50056027325134
+[TOTAL_GCS_G1_Young_Generation], Count, 47
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 974
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 1.3149545706146804
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 47
+[TOTAL_GC_TIME], Time(ms), 974
+[TOTAL_GC_TIME_%], Time(%), 1.3149545706146804
+[READ], Operations, 501
+[READ], AverageLatency(us), 763566.7065868264
+[READ], MinLatency(us), 27872
+[READ], MaxLatency(us), 4718591
+[READ], 95thPercentileLatency(us), 3667967
+[READ], 99thPercentileLatency(us), 4653055
+[READ], Return=OK, 501
+[CLEANUP], Operations, 64
+[CLEANUP], AverageLatency(us), 8600.515625
+[CLEANUP], MinLatency(us), 6
+[CLEANUP], MaxLatency(us), 549375
+[CLEANUP], 95thPercentileLatency(us), 37
+[CLEANUP], 99thPercentileLatency(us), 101
+[UPDATE], Operations, 499
+[UPDATE], AverageLatency(us), 7787293.498997996
+[UPDATE], MinLatency(us), 359424
+[UPDATE], MaxLatency(us), 23494655
+[UPDATE], 95thPercentileLatency(us), 21037055
+[UPDATE], 99thPercentileLatency(us), 22036479
+[UPDATE], Return=OK, 499
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_5 ----------------------------------*
+[OVERALL], RunTime(ms), 74655
+[OVERALL], Throughput(ops/sec), 13.394950103810864
+[TOTAL_GCS_G1_Young_Generation], Count, 130
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 1416
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 1.8967249346996184
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 130
+[TOTAL_GC_TIME], Time(ms), 1416
+[TOTAL_GC_TIME_%], Time(%), 1.8967249346996184
+[READ], Operations, 484
+[READ], AverageLatency(us), 627828.8925619834
+[READ], MinLatency(us), 20224
+[READ], MaxLatency(us), 3753983
+[READ], 95thPercentileLatency(us), 1402879
+[READ], 99thPercentileLatency(us), 3164159
+[READ], Return=OK, 484
+[CLEANUP], Operations, 64
+[CLEANUP], AverageLatency(us), 4893.5625
+[CLEANUP], MinLatency(us), 6
+[CLEANUP], MaxLatency(us), 311551
+[CLEANUP], 95thPercentileLatency(us), 75
+[CLEANUP], 99thPercentileLatency(us), 331
+[UPDATE], Operations, 516
+[UPDATE], AverageLatency(us), 7627967.7519379845
+[UPDATE], MinLatency(us), 322048
+[UPDATE], MaxLatency(us), 25133055
+[UPDATE], 95thPercentileLatency(us), 21217279
+[UPDATE], 99thPercentileLatency(us), 23347199
+[UPDATE], Return=OK, 516
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_6 ----------------------------------*
+[OVERALL], RunTime(ms), 63719
+[OVERALL], Throughput(ops/sec), 15.693906056278347
+[TOTAL_GCS_G1_Young_Generation], Count, 124
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 1330
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 2.0872895054850202
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 124
+[TOTAL_GC_TIME], Time(ms), 1330
+[TOTAL_GC_TIME_%], Time(%), 2.0872895054850202
+[READ], Operations, 486
+[READ], AverageLatency(us), 757623.621399177
+[READ], MinLatency(us), 19728
+[READ], MaxLatency(us), 2961407
+[READ], 95thPercentileLatency(us), 2174975
+[READ], 99thPercentileLatency(us), 2615295
+[READ], Return=OK, 486
+[CLEANUP], Operations, 64
+[CLEANUP], AverageLatency(us), 8547.84375
+[CLEANUP], MinLatency(us), 6
+[CLEANUP], MaxLatency(us), 545791
+[CLEANUP], 95thPercentileLatency(us), 93
+[CLEANUP], 99thPercentileLatency(us), 117
+[UPDATE], Operations, 514
+[UPDATE], AverageLatency(us), 6253048.031128405
+[UPDATE], MinLatency(us), 365056
+[UPDATE], MaxLatency(us), 12992511
+[UPDATE], 95thPercentileLatency(us), 11599871
+[UPDATE], 99thPercentileLatency(us), 12238847
+[UPDATE], Return=OK, 514
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_7 ----------------------------------*
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_8 ----------------------------------*
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_9 ----------------------------------*
+*---------------------------------- ycsb run end ------------------------------*
+*---------------------------------- ycsb run_10 ----------------------------------*

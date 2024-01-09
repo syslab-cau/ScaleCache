@@ -1,0 +1,22 @@
+; fio-rand-read.job for fiotest
+
+[global]
+;name=fio-rand-read
+directory=/mnt/test
+;filename=/dev/md126
+rw=randread
+bs=4k
+direct=0
+numjobs=64
+;verify=crc32c
+;time_based
+;runtime=60
+group_reporting
+
+[file1]
+size=3G
+;nrfiles=2
+;ioengine=libaio
+;ioengine=pvsync2
+;hipri
+;iodepth=16

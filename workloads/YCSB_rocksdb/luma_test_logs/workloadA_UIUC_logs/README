@@ -1,0 +1,2 @@
+throttling 2,100,000,000 (MAX support on JAVA integer) and using UIUC config-run.dat file
+record size: CAU config

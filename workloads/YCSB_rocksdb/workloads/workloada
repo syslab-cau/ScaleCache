@@ -1,0 +1,117 @@
+# Yahoo! Cloud System Benchmark
+# Workload A: Update heavy workload
+#   Application example: Session store recording recent actions
+#
+#   Read/update ratio: 50/50
+#   Default data size: 1 KB records (10 fields, 100 bytes each, plus key)
+#   Request distribution: zipfian
+
+## Workload size 20GB ## 
+#recordcount=1000
+#operationcount=1000
+## Workload size 20GB ## 
+
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+
+threadcount=64
+
+## Record size 1KB(default) ## 
+#recordcount=20480000
+#operationcount=20480000
+#fieldcount=10
+#fieldlength=100
+## ################ ## 
+
+## Record size 4KB, Workload size 20GB ## 
+#recordcount=5120000
+#operationcount=5120000
+#fieldcount=10
+#fieldlength=400
+## ################################### ## 
+
+## Record size 8KB, Workload size 20GB ## 
+recordcount=2560000
+operationcount=2560000
+fieldcount=10
+fieldlength=800
+## ################################### ## 
+
+## Record size 16KB, Workload size 20GB ## 
+#recordcount=1280000
+#operationcount=1280000
+#fieldcount=100
+#fieldlength=160
+## ################################### ## 
+
+## Record size 32KB, Workload size 20GB ## 
+#recordcount=640000
+#operationcount=640000
+#fieldcount=100
+#fieldlength=320
+## ##################################### ## 
+
+## Record size 64KB, Workload size 20GB ## 
+#recordcount=320000
+#operationcount=320000
+#fieldcount=100
+#fieldlength=640
+## ##################################### ## 
+
+## Record size 128KB, Workload size 20GB ## 
+#recordcount=160000
+#operationcount=160000
+#fieldcount=100
+#fieldlength=1280
+## ##################################### ## 
+
+## Record size 256KB, Workload size 20GB ## 
+#recordcount=80000
+#operationcount=80000
+#fieldcount=100
+#fieldlength=2560
+## ##################################### ## 
+
+## Record size 512KB, Workload size 20GB ## 
+#recordcount=40000
+#operationcount=40000
+#fieldcount=100
+#fieldlength=5120
+## ##################################### ## 
+
+## Record size 1MB, Workload size 20GB ## 
+#recordcount=20000
+#operationcount=20000
+#fieldcount=100
+#fieldlength=10000
+## ################################### ## 
+
+## Record size 5MB, Workload size 20GB ## 
+#recordcount=4000
+#operationcount=4000
+#fieldcount=100
+#fieldlength=50000
+## ################################### ## 
+
+## Record size 10MB, Workload size 20GB ## 
+#recordcount=2000
+#operationcount=2000
+#fieldcount=100
+#fieldlength=100000
+## #################################### ## 
+
+## Record size 20MB, Workload size 20GB ## 
+#recordcount=1000
+#operationcount=1000
+#fieldcount=200
+#fieldlength=100000
+## #################################### ## 
+
+requestdistribution=zipfian
+

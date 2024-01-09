@@ -1,0 +1,31 @@
+time=30 
+
+[filesystem0]
+
+	# required parts
+
+	location=/mnt/test
+	num_files=100
+	num_dirs=100
+	max_filesize=1G
+	min_filesize=1G
+	
+	# aging part
+	agefs=0
+	[threadgroup0]
+		num_threads=64
+		write_size=40960
+		write_blocksize=4096
+		create_weight=10
+		append_weight=10
+		write_weight=10
+		delete_weight=1
+	[end0]
+		desired_util=0.02	# age until 2% full
+
+	# other optional commands
+	
+	create_blocksize=1024		# use a small create blocksize
+	age_blocksize=1024		# and smaller age create blocksize
+	reuse=0	                        # don't reuse it
+[end0]
