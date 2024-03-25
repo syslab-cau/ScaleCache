@@ -1742,8 +1742,6 @@ void cc_xa_garbage_collector(struct cc_xarray *xa)
 
 	BUG_ON(!xa);
 
-	cc_xa_lock_irqsave(xa, flags);
-
 	for (;;) {
 		entry = cc_xa_head(xa);
 		if (done)
@@ -1759,7 +1757,6 @@ void cc_xa_garbage_collector(struct cc_xarray *xa)
 		done = 1;
 		cc_xa_garbage_collect_entry(xa, entry, 0, shift, &done);
 	}
-	cc_xa_unlock_irqrestore(xa, flags);
 
 	if (!entry)
 		cc_xa_destroy(xa);

@@ -1400,7 +1400,6 @@ noinline int __cc_add_to_page_cache_locked(struct page *page,
 		cc_xas_for_each_conflict(&xas, entry) {
 			old = entry;
 			if (!cc_xa_is_value(entry)) {
-				printk("Insert & Insert (%s:%d)\n", __func__, __LINE__);
 				cc_xas_set_err(&xas, -EEXIST);
 				goto unlock;
 			}
